@@ -33,7 +33,7 @@ O projeto foi pensado para ser flexível e se adaptar às exigências da discipl
 
 ---
 
-**Estrutura do Projeto**
+# Estrutura do Projeto
 
 ---
 
