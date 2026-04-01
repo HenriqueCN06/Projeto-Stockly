@@ -35,8 +35,6 @@ O projeto foi pensado para ser flexível e se adaptar às exigências da discipl
 
 # Estrutura do Projeto
 
----
-
 ## ✨ Funcionalidades Principais
 
 * **Dashboard de Alertas:** Painel inicial com métricas cruciais (como Valor Total em Estoque) e avisos automáticos destacando produtos que atingiram ou caíram abaixo do estoque mínimo configurado.
