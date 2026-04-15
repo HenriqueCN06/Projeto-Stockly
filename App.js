@@ -1,12 +1,14 @@
-// Stockly - Frontend (React Native + Expo)
-// Estrutura simplificada, pronta para expandir
+// Adicione esta linha no TOPO ABSOLUTO do arquivo
+import 'react-native-gesture-handler'; 
 
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet } from 'react-native';
-import create from 'zustand';
+
+// CORREÇÃO: Importação nomeada usando chaves { }
+import { create } from 'zustand'; 
 
 // ----------------------
 // STATE (Zustand)
@@ -19,6 +21,7 @@ const useStore = create((set) => ({
   }))
 }));
 
+// ... restante do seu código (Screens, Navigation, Styles) continua igual!
 // ----------------------
 // SCREENS
 // ----------------------
