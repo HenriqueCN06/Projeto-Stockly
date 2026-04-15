@@ -28,6 +28,7 @@ const useStore = create((set) => ({
   }))
 }));
 
+// ... restante do seu código (Screens, Navigation, Styles) continua igual!
 // ----------------------
 // SCREENS
 // ----------------------
