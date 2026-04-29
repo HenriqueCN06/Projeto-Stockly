@@ -1,26 +1,41 @@
 // Adicione esta linha no TOPO ABSOLUTO do arquivo
 import 'react-native-gesture-handler'; 
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, Alert, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
+import { createDrawerNavigator, DrawerContentScrollView, DrawerItemList } from '@react-navigation/drawer';
 import { Ionicons } from '@expo/vector-icons';
-import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet } from 'react-native';
 
-// CORREÇÃO: Importação nomeada usando chaves { }
+// IMPORTAÇÃO DO BANCO DE DADOS
+import { supabase } from './src/services/supabase';
+
+// ESTADO GLOBAL
 import { create } from 'zustand'; 
+
+if (Platform.OS === 'web') {
+  const style = document.createElement('style');
+  style.textContent = `
+    input::-ms-reveal,
+    input::-ms-clear {
+      display: none;
+    }
+    input::-webkit-credentials-auto-fill-button {
+      visibility: hidden;
+      pointer-events: none;
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 // ----------------------
 // STATE (Zustand)
 // ----------------------
 const useStore = create((set) => ({
-  // --- NOVOS ESTADOS DE AUTENTICAÇÃO ---
   isLoggedIn: false,
-  login: () => set({ isLoggedIn: true }),
-  logout: () => set({ isLoggedIn: false }),
+  setAuthState: (status) => set({ isLoggedIn: status }),
 
-  // --- ESTADOS DE ESTOQUE (MANTIDOS) ---
   products: [],
   addProduct: (product) => set((state) => ({ products: [...state.products, product] })),
   updateStock: (id, qty) => set((state) => ({
@@ -28,16 +43,30 @@ const useStore = create((set) => ({
   }))
 }));
 
-// ... restante do seu código (Screens, Navigation, Styles) continua igual!
 // ----------------------
 // SCREENS
 // ----------------------
 
-// --- TELA DE LOGIN ---
 const LoginScreen = ({ navigation }) => { 
-  const login = useStore(state => state.login);
-  const [email, setEmail] = React.useState('');
-  const [password, setPassword] = React.useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  // NOVO: Estado para controlar a visibilidade da senha
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert("Atenção", "Preencha e-mail e senha.");
+      return;
+    }
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email,
+      password: password,
+    });
+    if (error) Alert.alert("Erro ao entrar", error.message);
+    setLoading(false);
+  };
 
   return (
     <View style={styles.loginContainer}>
@@ -47,72 +76,127 @@ const LoginScreen = ({ navigation }) => {
         placeholder="E-mail" 
         style={styles.input} 
         onChangeText={setEmail} 
+        value={email}
         keyboardType="email-address"
         autoCapitalize="none"
       />
-      <TextInput 
-        placeholder="Senha" 
-        style={styles.input} 
-        onChangeText={setPassword} 
-        secureTextEntry 
-      />
+      
+      {/* NOVO: Container da Senha com o Ícone */}
+      <View style={styles.passwordContainer}>
+        <TextInput 
+          placeholder="Senha" 
+          style={styles.passwordInput} 
+          onChangeText={setPassword} 
+          value={password}
+          secureTextEntry={!showPassword} // Inverte o estado
+        />
+        <TouchableOpacity 
+          style={styles.eyeIcon} 
+          onPress={() => setShowPassword(!showPassword)}
+        >
+          <Ionicons name={showPassword ? "eye-off" : "eye"} size={24} color="#666" />
+        </TouchableOpacity>
+      </View>
 
-      <TouchableOpacity style={styles.primaryButton} onPress={login}>
-        <Text style={styles.primaryButtonText}>Login</Text>
+      <TouchableOpacity style={styles.primaryButton} onPress={handleLogin} disabled={loading}>
+        <Text style={styles.primaryButtonText}>{loading ? "Entrando..." : "Login"}</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.secondaryButton} onPress={() => navigation.navigate('SignUp')}>
+      <TouchableOpacity style={styles.secondaryButton} onPress={() => navigation.navigate('SignUp')} disabled={loading}>
         <Text style={styles.secondaryButtonText}>Cadastrar-se</Text>
       </TouchableOpacity>
     </View>
   );
 };
 
-// --- TELA DE CADASTRO ATUALIZADA ---
 const SignUpScreen = ({ navigation }) => {
-  const [nome, setNome] = React.useState('');
-  const [email, setEmail] = React.useState('');
-  const [senha, setSenha] = React.useState('');
-  const [confirmaSenha, setConfirmaSenha] = React.useState('');
+  const [nome, setNome] = useState('');
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState('');
+  const [confirmaSenha, setConfirmaSenha] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  // NOVOS: Estados para os dois campos de senha
+  const [showSenha, setShowSenha] = useState(false);
+  const [showConfirmaSenha, setShowConfirmaSenha] = useState(false);
 
-  const handleCadastro = () => {
-    if (senha !== confirmaSenha) {
-      alert("As senhas não coincidem!");
+  const handleCadastro = async () => {
+    if (!nome || !email || !senha) {
+      Alert.alert("Atenção", "Preencha todos os campos!");
       return;
     }
-    alert("Conta criada com sucesso!");
-    navigation.navigate('Login');
+    if (senha !== confirmaSenha) {
+      Alert.alert("Atenção", "As senhas não coincidem!");
+      return;
+    }
+    setLoading(true);
+    const { data, error } = await supabase.auth.signUp({
+      email: email,
+      password: senha,
+    });
+    if (error) {
+      Alert.alert("Erro no cadastro", error.message);
+      setLoading(false);
+      return;
+    }
+    if (data.user) {
+      const { error: profileError } = await supabase
+        .from('perfis')
+        .insert([{ id: data.user.id, nome: nome }]);
+      if (profileError) console.log("Erro ao salvar perfil:", profileError);
+    }
+    Alert.alert("Sucesso!", "Conta criada com sucesso!");
+    setLoading(false);
   };
 
   return (
     <View style={styles.loginContainer}>
-      {/* --- NOVA SETA DE VOLTAR --- */}
-      <TouchableOpacity 
-        style={styles.backButton} 
-        onPress={() => navigation.goBack()}
-      >
+      <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
         <Ionicons name="arrow-back" size={28} color="#333" />
       </TouchableOpacity>
 
       <Text style={styles.logoText}>CRIAR CONTA</Text>
 
-      <TextInput placeholder="Nome" style={styles.input} onChangeText={setNome} />
-      <TextInput placeholder="E-mail" style={styles.input} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-      <TextInput placeholder="Senha" style={styles.input} onChangeText={setSenha} secureTextEntry />
-      <TextInput placeholder="Confirmar Senha" style={styles.input} onChangeText={setConfirmaSenha} secureTextEntry />
-
-      <TouchableOpacity style={styles.primaryButton} onPress={handleCadastro}>
-        <Text style={styles.primaryButtonText}>Cadastrar</Text>
-      </TouchableOpacity>
+      <TextInput placeholder="Nome" style={styles.input} onChangeText={setNome} value={nome} />
+      <TextInput placeholder="E-mail" style={styles.input} onChangeText={setEmail} value={email} keyboardType="email-address" autoCapitalize="none" />
       
-      {/* O botão "Voltar para o Login" foi removido daqui */}
+      {/* NOVO: Campo de Senha com Ícone */}
+      <View style={styles.passwordContainer}>
+        <TextInput 
+          placeholder="Senha" 
+          style={styles.passwordInput} 
+          onChangeText={setSenha} 
+          value={senha} 
+          secureTextEntry={!showSenha} 
+        />
+        <TouchableOpacity style={styles.eyeIcon} onPress={() => setShowSenha(!showSenha)}>
+          <Ionicons name={showSenha ? "eye-off" : "eye"} size={24} color="#666" />
+        </TouchableOpacity>
+      </View>
+
+      {/* NOVO: Campo de Confirmar Senha com Ícone */}
+      <View style={styles.passwordContainer}>
+        <TextInput 
+          placeholder="Confirmar Senha" 
+          style={styles.passwordInput} 
+          onChangeText={setConfirmaSenha} 
+          value={confirmaSenha} 
+          secureTextEntry={!showConfirmaSenha} 
+        />
+        <TouchableOpacity style={styles.eyeIcon} onPress={() => setShowConfirmaSenha(!showConfirmaSenha)}>
+          <Ionicons name={showConfirmaSenha ? "eye-off" : "eye"} size={24} color="#666" />
+        </TouchableOpacity>
+      </View>
+
+      <TouchableOpacity style={styles.primaryButton} onPress={handleCadastro} disabled={loading}>
+        <Text style={styles.primaryButtonText}>{loading ? "Aguarde..." : "Cadastrar"}</Text>
+      </TouchableOpacity>
     </View>
   );
 };
 
 const Dashboard = () => {
   const products = useStore(state => state.products);
-
   const lowStock = products.filter(p => p.estoque <= p.min);
   const totalValue = products.reduce((acc, p) => acc + (p.estoque * p.custo), 0);
 
@@ -120,95 +204,86 @@ const Dashboard = () => {
     <View style={styles.container}>
       <Text style={styles.title}>📦 Stockly</Text>
       <Text>Total em estoque: R$ {totalValue.toFixed(2)}</Text>
-
       <Text style={styles.subtitle}>⚠️ Alertas</Text>
-      {lowStock.length === 0 ? (
-        <Text>Nenhum produto em falta</Text>
-      ) : (
-        lowStock.map(p => (
-          <Text key={p.id}>⚠️ {p.nome} baixo ({p.estoque})</Text>
-        ))
-      )}
+      {lowStock.length === 0 ? <Text>Nenhum produto em falta</Text> : lowStock.map(p => <Text key={p.id}>⚠️ {p.nome} baixo ({p.estoque})</Text>)}
     </View>
   );
 };
 
-const ProductList = ({ navigation }) => {
+const ProductList = ({ navigation }) => { 
   const products = useStore(state => state.products);
-
   return (
     <View style={styles.container}>
-      <FlatList
-        data={products}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
+      <FlatList data={products} keyExtractor={(item) => item.id} renderItem={({ item }) => (
           <TouchableOpacity onPress={() => navigation.navigate('Movimentar', { id: item.id })}>
             <Text style={styles.item}>{item.nome} - {item.estoque}</Text>
           </TouchableOpacity>
-        )}
-      />
+        )} />
     </View>
   );
 };
 
-const AddProduct = () => {
-  const addProduct = useStore(state => state.addProduct);
-
-  const [nome, setNome] = React.useState('');
-  const [estoque, setEstoque] = React.useState('');
-  const [min, setMin] = React.useState('');
-  const [custo, setCusto] = React.useState('');
-
+const AddProduct = () => { 
   return (
     <View style={styles.container}>
-      <TextInput placeholder="Nome" onChangeText={setNome} style={styles.input} />
-      <TextInput placeholder="Estoque" onChangeText={setEstoque} style={styles.input} keyboardType="numeric" />
-      <TextInput placeholder="Estoque mínimo" onChangeText={setMin} style={styles.input} keyboardType="numeric" />
-      <TextInput placeholder="Preço de custo" onChangeText={setCusto} style={styles.input} keyboardType="numeric" />
-
-      <TouchableOpacity
-        style={styles.button}
-        onPress={() => {
-          addProduct({
-            id: Date.now().toString(),
-            nome,
-            estoque: Number(estoque),
-            min: Number(min),
-            custo: Number(custo)
-          });
-        }}
-      >
-        <Text style={styles.buttonText}>Cadastrar</Text>
-      </TouchableOpacity>
+      <Text>Adicionar Produto... (Em construção)</Text>
     </View>
   );
 };
 
-const Movimentar = ({ route }) => {
-  const { id } = route.params;
-  const updateStock = useStore(state => state.updateStock);
-
+const Movimentar = ({ route }) => { 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Movimentar</Text>
-
-      <TouchableOpacity style={styles.button} onPress={() => updateStock(id, 1)}>
-        <Text>+ Entrada</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.button} onPress={() => updateStock(id, -1)}>
-        <Text>- Saída</Text>
-      </TouchableOpacity>
+      <Text>Movimentar... (Em construção)</Text>
     </View>
   );
 };
 
 // ----------------------
-// NAVIGATION
+// NAVIGATION (MENU LATERAL)
 // ----------------------
 
-const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
+const Drawer = createDrawerNavigator();
+
+const CustomDrawerContent = (props) => {
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) Alert.alert("Erro ao sair", error.message);
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      <DrawerContentScrollView {...props}>
+        <DrawerItemList {...props} />
+      </DrawerContentScrollView>
+      
+      <View style={{ padding: 20, borderTopWidth: 1, borderTopColor: '#eee' }}>
+        
+        {/* --- Botão de Configurações --- */}
+        <TouchableOpacity 
+          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12 }} 
+          onPress={() => Alert.alert("Configurações", "Em breve!")}
+        >
+          {/* Ícone de engrenagem no mesmo estilo do olho */}
+          <Ionicons name="settings-outline" size={22} color="#555" style={{ marginRight: 15 }} />
+          <Text style={{ fontSize: 14, fontWeight: '500', color: '#555' }}>Configurações</Text>
+        </TouchableOpacity>
+        
+        {/* --- Botão de Desconectar --- */}
+        <TouchableOpacity 
+          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12 }} 
+          onPress={handleLogout}
+        >
+          {/* Ícone de porta/sair vermelho */}
+          <Ionicons name="log-out-outline" size={22} color="#d9534f" style={{ marginRight: 15 }} />
+          <Text style={{ fontSize: 14, fontWeight: '500', color: '#d9534f' }}>Desconectar</Text>
+        </TouchableOpacity>
+        
+      </View>
+    </View>
+  );
+};
 
 const AuthNavigator = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -218,33 +293,54 @@ const AuthNavigator = () => (
 );
 
 const ProductStack = () => (
-  <Stack.Navigator>
+  <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="Lista" component={ProductList} />
     <Stack.Screen name="Movimentar" component={Movimentar} />
   </Stack.Navigator>
 );
 
-// Agrupamos o seu app antigo neste componente
-const MainAppTabs = () => (
-  <Tab.Navigator>
-    <Tab.Screen name="Dashboard" component={Dashboard} />
-    <Tab.Screen name="Produtos" component={ProductStack} />
-    <Tab.Screen name="Adicionar" component={AddProduct} />
-  </Tab.Navigator>
+const MainAppDrawer = () => (
+  <Drawer.Navigator 
+    drawerContent={(props) => <CustomDrawerContent {...props} />}
+    screenOptions={{
+      headerTintColor: '#333',
+      drawerActiveTintColor: '#007AFF',
+      drawerItemStyle: {
+        borderRadius: 8,
+      }
+    }}
+  >
+    <Drawer.Screen name="Dashboard" component={Dashboard} />
+    <Drawer.Screen name="Produtos" component={ProductStack} />
+    <Drawer.Screen name="Adicionar" component={AddProduct} />
+  </Drawer.Navigator>
 );
-
 
 export default function App() {
   const isLoggedIn = useStore(state => state.isLoggedIn);
+  const setAuthState = useStore(state => state.setAuthState);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setAuthState(!!session);
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthState(!!session);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!isLoggedIn ? (
-          // Substituímos a tela de Login isolada pelo AuthNavigator
           <Stack.Screen name="Auth" component={AuthNavigator} />
         ) : (
-          <Stack.Screen name="MainApp" component={MainAppTabs} />
+          <Stack.Screen name="MainApp" component={MainAppDrawer} />
         )}
       </Stack.Navigator>
     </NavigationContainer>
@@ -254,86 +350,22 @@ export default function App() {
 // ----------------------
 // STYLES
 // ----------------------
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 20
-    
-  },
-  // --- NOVOS ESTILOS DO LOGIN ---
-  loginContainer: {
-    flex: 1,
-    justifyContent: 'center', 
-    padding: 30,
-    backgroundColor: '#fff'
-  },
-  logoText: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 40,
-    letterSpacing: 2,
-    color: '#333'
-  },
-  primaryButton: {
-    backgroundColor: '#007AFF', // Azul estilo iOS
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 10
-  },
-  primaryButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16
-  },
-  secondaryButton: {
-    padding: 15,
-    alignItems: 'center',
-    marginTop: 10
-  },
-  secondaryButtonText: {
-    color: '#007AFF',
-    fontWeight: '600'
-  },
-  backButton: {
-    position: 'absolute', // Permite posicionar em relação à tela
-    top: 50,              // Distância do topo (ajuste conforme necessário)
-    left: 20,             // Distância da esquerda
-    padding: 10,          // Aumenta a área de toque
-    zIndex: 10            // Garante que a seta fique por cima de tudo
-  },
-  // --- ESTILOS ANTIGOS (MANTIDOS) ---
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold'
-  },
-  subtitle: {
-    marginTop: 20,
-    fontWeight: 'bold'
-  },
-  item: {
-    padding: 15,
-    borderBottomWidth: 1,
-    borderColor: '#eee'
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 15,
-    marginBottom: 15,
-    backgroundColor: '#fafafa'
-  },
-  button: {
-    backgroundColor: '#ddd',
-    padding: 15,
-    marginTop: 10,
-    alignItems: 'center',
-    borderRadius: 8
-  },
-  buttonText: {
-    fontWeight: 'bold'
-  }
+  container: { flex: 1, padding: 20 },
+  loginContainer: { flex: 1, justifyContent: 'center', padding: 30, backgroundColor: '#fff' },
+  logoText: { fontSize: 36, fontWeight: 'bold', textAlign: 'center', marginBottom: 40, letterSpacing: 2, color: '#333' },
+  primaryButton: { backgroundColor: '#007AFF', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 10 },
+  primaryButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  secondaryButton: { padding: 15, alignItems: 'center', marginTop: 10 },
+  secondaryButtonText: { color: '#007AFF', fontWeight: '600' },
+  backButton: { position: 'absolute', top: 50, left: 20, padding: 10, zIndex: 10 },
+  title: { fontSize: 24, fontWeight: 'bold' },
+  subtitle: { marginTop: 20, fontWeight: 'bold' },
+  item: { padding: 15, borderBottomWidth: 1, borderColor: '#eee' },
+  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 15, marginBottom: 15, backgroundColor: '#fafafa' },
+  passwordContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ccc', borderRadius: 8, marginBottom: 15, backgroundColor: '#fafafa' },
+  passwordInput: { flex: 1, padding: 15 },
+  eyeIcon: { padding: 15 },
+  button: { backgroundColor: '#ddd', padding: 15, marginTop: 10, alignItems: 'center', borderRadius: 8 },
+  buttonText: { fontWeight: 'bold' }
 });
