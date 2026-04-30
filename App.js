@@ -51,25 +51,74 @@ const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  // NOVO: Estado para controlar a visibilidade da senha
   const [showPassword, setShowPassword] = useState(false);
 
+  // NOVO: Estado unificado para a notificação
+  const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
+
+  // NOVO: Função para exibir o banner
+  const showBanner = (message, type) => {
+    setNotification({ visible: true, message, type });
+    setTimeout(() => {
+      setNotification({ visible: false, message: '', type: 'success' });
+    }, 3000);
+  };
+
   const handleLogin = async () => {
+    // Validação de campos vazios
     if (!email || !password) {
-      Alert.alert("Atenção", "Preencha e-mail e senha.");
+      showBanner("Preencha e-mail e senha.", "error");
       return;
     }
+
     setLoading(true);
+    
+    // Tentativa de login no Supabase
     const { error } = await supabase.auth.signInWithPassword({
       email: email,
       password: password,
     });
-    if (error) Alert.alert("Erro ao entrar", error.message);
+
+    if (error) {
+      let errorMessage = error.message;
+      
+      // Traduzindo os erros mais comuns de login para português
+      if (errorMessage.includes("Invalid login credentials")) {
+        errorMessage = "E-mail ou senha incorretos.";
+      } else if (errorMessage.toLowerCase().includes("invalid email")) {
+        errorMessage = "Formato de e-mail inválido.";
+      } else if (errorMessage.includes("Email not confirmed")) {
+         errorMessage = "Por favor, confirme seu e-mail antes de entrar.";
+      }
+
+      showBanner(errorMessage, "error");
+      setLoading(false);
+      return; // Para a execução aqui se der erro
+    }
+    
+    // Se der sucesso, não precisamos de banner porque o app 
+    // vai pular para o Dashboard instantaneamente!
     setLoading(false);
   };
 
   return (
     <View style={styles.loginContainer}>
+      
+      {/* NOVO: Notificação Dinâmica (Fundo 50% opacidade e Texto Escuro) */}
+      {notification.visible && (
+        <View style={[
+          styles.topNotification, 
+          { backgroundColor: notification.type === 'error' ? 'rgba(244, 67, 54, 0.5)' : 'rgba(76, 175, 80, 0.5)' }
+        ]}>
+          <Text style={[
+            styles.topNotificationText,
+            { color: notification.type === 'error' ? '#7f1d1d' : '#14532d' }
+          ]}>
+            {notification.message}
+          </Text>
+        </View>
+      )}
+
       <Text style={styles.logoText}>STOCKLY</Text>
 
       <TextInput 
@@ -81,14 +130,13 @@ const LoginScreen = ({ navigation }) => {
         autoCapitalize="none"
       />
       
-      {/* NOVO: Container da Senha com o Ícone */}
       <View style={styles.passwordContainer}>
         <TextInput 
           placeholder="Senha" 
           style={styles.passwordInput} 
           onChangeText={setPassword} 
           value={password}
-          secureTextEntry={!showPassword} // Inverte o estado
+          secureTextEntry={!showPassword} 
         />
         <TouchableOpacity 
           style={styles.eyeIcon} 
@@ -116,41 +164,104 @@ const SignUpScreen = ({ navigation }) => {
   const [confirmaSenha, setConfirmaSenha] = useState('');
   const [loading, setLoading] = useState(false);
   
-  // NOVOS: Estados para os dois campos de senha
   const [showSenha, setShowSenha] = useState(false);
   const [showConfirmaSenha, setShowConfirmaSenha] = useState(false);
+  
+  // NOVO: Estado unificado para controlar todas as notificações (Sucesso e Erro)
+  const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
+
+  // Função auxiliar para exibir o banner e escondê-lo automaticamente
+  const showBanner = (message, type) => {
+    setNotification({ visible: true, message, type });
+    // Esconde a notificação após 3 segundos
+    setTimeout(() => {
+      setNotification({ visible: false, message: '', type: 'success' });
+    }, 3000);
+  };
 
   const handleCadastro = async () => {
+    // 1. Validação de campos vazios
     if (!nome || !email || !senha) {
-      Alert.alert("Atenção", "Preencha todos os campos!");
+      showBanner("Preencha todos os campos.", "error");
       return;
     }
+
+    // 2. Validação RÁPIDA de formato de e-mail (Não gasta requisição do Supabase!)
+    // Verifica se tem texto, uma "@", mais texto, um "." e mais texto no final
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      showBanner("Email inválido.", "error");
+      return;
+    }
+    
+    // 3. Validação de senhas iguais
     if (senha !== confirmaSenha) {
-      Alert.alert("Atenção", "As senhas não coincidem!");
+      showBanner("As senhas não coincidem.", "error");
       return;
     }
+    
     setLoading(true);
+    
+    // 4. Envio para o Supabase
     const { data, error } = await supabase.auth.signUp({
       email: email,
       password: senha,
     });
+    
+    // 5. Tratamento de erros que vierem do banco
     if (error) {
-      Alert.alert("Erro no cadastro", error.message);
+      let errorMessage = error.message;
+      
+      // Traduzindo os erros para português (usando toLowerCase para ser mais flexível)
+      if (errorMessage.includes("Password should be at least 6 characters")) {
+        errorMessage = "A senha deve ter no mínimo 6 caracteres.";
+      } else if (errorMessage.includes("User already registered")) {
+        errorMessage = "Este e-mail já está cadastrado no sistema.";
+      } else if (errorMessage.toLowerCase().includes("invalid email") || errorMessage.toLowerCase().includes("format")) {
+        errorMessage = "Email inválido.";
+      }
+
+      showBanner(errorMessage, "error");
       setLoading(false);
       return;
     }
+    
+    // 6. Sucesso (Cria o perfil e redireciona)
     if (data.user) {
       const { error: profileError } = await supabase
         .from('perfis')
         .insert([{ id: data.user.id, nome: nome }]);
       if (profileError) console.log("Erro ao salvar perfil:", profileError);
     }
-    Alert.alert("Sucesso!", "Conta criada com sucesso!");
+    
     setLoading(false);
+    showBanner("Conta criada com sucesso!", "success");
+    
+    // Aguarda 2 segundos e manda pro login
+    setTimeout(() => {
+      navigation.navigate('Login');
+    }, 2000); 
   };
 
   return (
     <View style={styles.loginContainer}>
+      
+      {/* NOVO: Notificação Dinâmica (Fundo 50% e Texto Escuro) */}
+      {notification.visible && (
+        <View style={[
+          styles.topNotification, 
+          { backgroundColor: notification.type === 'error' ? 'rgba(244, 67, 54, 0.5)' : 'rgba(76, 175, 80, 0.5)' }
+        ]}>
+          <Text style={[
+            styles.topNotificationText,
+            // NOVO: Cor da letra dinâmica e escura para dar contraste
+            { color: notification.type === 'error' ? '#7f1d1d' : '#14532d' }
+          ]}>
+            {notification.message}
+          </Text>
+        </View>
+      )}
+
       <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
         <Ionicons name="arrow-back" size={28} color="#333" />
       </TouchableOpacity>
@@ -160,7 +271,6 @@ const SignUpScreen = ({ navigation }) => {
       <TextInput placeholder="Nome" style={styles.input} onChangeText={setNome} value={nome} />
       <TextInput placeholder="E-mail" style={styles.input} onChangeText={setEmail} value={email} keyboardType="email-address" autoCapitalize="none" />
       
-      {/* NOVO: Campo de Senha com Ícone */}
       <View style={styles.passwordContainer}>
         <TextInput 
           placeholder="Senha" 
@@ -174,7 +284,6 @@ const SignUpScreen = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
-      {/* NOVO: Campo de Confirmar Senha com Ícone */}
       <View style={styles.passwordContainer}>
         <TextInput 
           placeholder="Confirmar Senha" 
@@ -367,5 +476,7 @@ const styles = StyleSheet.create({
   passwordInput: { flex: 1, padding: 15 },
   eyeIcon: { padding: 15 },
   button: { backgroundColor: '#ddd', padding: 15, marginTop: 10, alignItems: 'center', borderRadius: 8 },
-  buttonText: { fontWeight: 'bold' }
+  buttonText: { fontWeight: 'bold' },
+  topNotification: { position: 'absolute', top: 40, left: 20, right: 20, backgroundColor: '#4CAF50', padding: 15, borderRadius: 8, alignItems: 'center', zIndex: 100, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4 },
+  topNotificationText: {color: '#fff', fontWeight: 'bold', fontSize: 16,}
 });
