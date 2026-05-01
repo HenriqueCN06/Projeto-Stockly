@@ -451,7 +451,7 @@ const EmptyScreen = () => {
                 Seu estoque está pronto!
               </Text>
               <Text style={{ marginTop: 10, fontSize: 16, color: '#666', textAlign: 'center' }}>
-                Adicione um produto para visualizá-los aqui.
+                Adicione produtos para visualizá-los aqui.
               </Text>
             </View>
           ) : (
