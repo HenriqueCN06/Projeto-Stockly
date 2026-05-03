@@ -398,13 +398,16 @@ const EmptyScreen = () => {
       const vendaNum = parseFloat(precoVenda.replace(',', '.'));
       const atualNum = parseInt(estoqueAtual, 10);
       const minNum = estoqueMinimo ? parseInt(estoqueMinimo, 10) : 5;
+      
+      // NOVO: Se o SKU estiver vazio, gera um código interno usando a data/hora exata!
+      const skuFinal = sku.trim() === '' ? `INT-${Date.now()}` : sku.trim();
 
       const { data, error } = await supabase
         .from('produtos')
         .insert([{
           loja_id: lojaAtiva.id,
           nome: nome,
-          sku_barcode: sku || null,
+          sku_barcode: skuFinal,
           preco_custo: custoNum,
           preco_venda: vendaNum,
           estoque_atual: atualNum,
@@ -463,7 +466,7 @@ const EmptyScreen = () => {
                 <View style={{ backgroundColor: '#fff', padding: 15, borderRadius: 8, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 }}>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.nome}</Text>
-                    {item.sku_barcode ? <Text style={{ fontSize: 12, color: '#888' }}>SKU: {item.sku_barcode}</Text> : null}
+                    {item.sku_barcode && !item.sku_barcode.startsWith('INT-') ? <Text style={{ fontSize: 12, color: '#888' }}>SKU: {item.sku_barcode}</Text> : null}
                     <Text style={{ fontSize: 14, color: '#007AFF', marginTop: 5, fontWeight: '500' }}>
                       R$ {Number(item.preco_venda).toFixed(2).replace('.', ',')}
                     </Text>
@@ -509,6 +512,7 @@ const EmptyScreen = () => {
 
             {/* 2. CAMADA DA CAIXA BRANCA */}
             <Animated.View style={{ 
+              width: '100%',
               backgroundColor: '#fff', 
               padding: 20, 
               borderTopLeftRadius: 20, 
@@ -521,12 +525,12 @@ const EmptyScreen = () => {
                 <TextInput placeholder="Nome do Produto *" value={nome} onChangeText={setNome} style={styles.input} />
                 <TextInput placeholder="Código de Barras / SKU (Opcional)" value={sku} onChangeText={setSku} style={styles.input} keyboardType="numeric" />
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <TextInput placeholder="Custo (R$) *" value={precoCusto} onChangeText={setPrecoCusto} style={[styles.input, { flex: 0.48 }]} keyboardType="numeric" />
-                  <TextInput placeholder="Venda (R$) *" value={precoVenda} onChangeText={setPrecoVenda} style={[styles.input, { flex: 0.48 }]} keyboardType="numeric" />
+                  <TextInput placeholder="Custo (R$) *" value={precoCusto} onChangeText={setPrecoCusto} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                  <TextInput placeholder="Venda (R$) *" value={precoVenda} onChangeText={setPrecoVenda} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <TextInput placeholder="Estoque Inicial *" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { flex: 0.48 }]} keyboardType="numeric" />
-                  <TextInput placeholder="Estoque Mín." value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { flex: 0.48 }]} keyboardType="numeric" />
+                  <TextInput placeholder="Estoque Inicial *" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                  <TextInput placeholder="Estoque Mín." value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10, paddingBottom: 20 }}>
                   <TouchableOpacity onPress={fecharModal} style={{ padding: 12, marginRight: 15 }} disabled={loading}>
@@ -567,10 +571,17 @@ const Stack = createStackNavigator();
 const Drawer = createDrawerNavigator();
 
 const CustomDrawerContent = (props) => {
-  // Estados para controlar a janelinha (Modal)
+  // Estados do Modal de Criar
   const [modalVisible, setModalVisible] = useState(false);
   const [nomeEstoque, setNomeEstoque] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // NOVO: Estados para o Menu Flutuante (Opções) e Renomear
+  const [estoqueOpcoes, setEstoqueOpcoes] = useState(null); // Guarda qual estoque foi clicado
+  const [modalOpcoesVisible, setModalOpcoesVisible] = useState(false);
+  const [modalRenomearVisible, setModalRenomearVisible] = useState(false);
+  const [modalApagarVisible, setModalApagarVisible] = useState(false);
+  const [novoNome, setNovoNome] = useState('');
 
   // Estados Globais
   const lojas = useStore(state => state.lojas);
@@ -579,19 +590,10 @@ const CustomDrawerContent = (props) => {
   const setLojaAtiva = useStore(state => state.setLojaAtiva);
 
   const handleLogout = async () => {
-    // 1. Encerra a sessão no Supabase
     const { error } = await supabase.auth.signOut();
-    
-    if (error) {
-      Alert.alert("Erro ao sair", error.message);
-    } else {
-      // 2. A "Vassourada": Força a limpeza da memória do Zustand!
-      useStore.setState({ 
-        lojas: [], 
-        lojaAtiva: null, 
-        products: [] ,
-        isFetchingLojas: true
-      });
+    if (error) Alert.alert("Erro ao sair", error.message);
+    else {
+      useStore.setState({ lojas: [], lojaAtiva: null, products: [], isFetchingLojas: true });
     }
   };
 
@@ -600,35 +602,151 @@ const CustomDrawerContent = (props) => {
       Alert.alert("Atenção", "Dê um nome ao seu novo estoque!");
       return;
     }
-
     if (lojas.length >= 3) {
       Alert.alert("Limite atingido", "Você só pode criar até 3 estoques diferentes.");
       return;
     }
-
     setLoading(true);
-
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      
+      // NOVO: Calcula a próxima ordem (maior ordem atual + 1)
+      const proximaOrdem = lojas.length > 0 ? Math.max(...lojas.map(l => l.ordem || 0)) + 1 : 1;
 
       const { data, error } = await supabase
         .from('lojas')
-        .insert([{ nome: nomeEstoque, dono_id: user.id }])
+        .insert([{ nome: nomeEstoque, dono_id: user.id, ordem: proximaOrdem }]) // <--- NOVO: Insere a ordem
         .select()
         .single();
-
+        
       if (error) throw error;
 
-      const novasLojas = [...lojas, data];
+      // NOVO: Adiciona a nova loja e reordena a lista localmente
+      const novasLojas = [...lojas, data].sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
       setLojas(novasLojas);
       setLojaAtiva(data); 
 
       setModalVisible(false);
       setNomeEstoque('');
       props.navigation.closeDrawer();
-
     } catch (error) {
       Alert.alert("Erro", error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // NOVO: Função para Renomear
+  const handleRenomear = async () => {
+    if (novoNome.trim() === '') return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('lojas')
+        .update({ nome: novoNome })
+        .eq('id', estoqueOpcoes.id)
+        .select()
+        .single();
+        
+      if (error) throw error;
+
+      // Atualiza a lista na tela
+      const novasLojas = lojas.map(l => l.id === estoqueOpcoes.id ? data : l);
+      setLojas(novasLojas);
+      
+      // Se ele renomeou o estoque que está aberto agora, atualiza o cabeçalho também
+      if (lojaAtiva?.id === estoqueOpcoes.id) {
+        setLojaAtiva(data);
+      }
+
+      setModalRenomearVisible(false);
+    } catch (error) {
+      Alert.alert("Erro", error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // NOVO: Função para Apagar (Agora limpa os produtos primeiro!)
+  const handleApagar = async () => {
+    setLoading(true);
+    try {
+      // 1. A MÁGICA: Apaga todos os produtos dessa loja primeiro para o Supabase não bloquear!
+      await supabase.from('produtos').delete().eq('loja_id', estoqueOpcoes.id);
+      
+      // 2. Agora sim, apaga a loja tranquilamente
+      const { error } = await supabase.from('lojas').delete().eq('id', estoqueOpcoes.id);
+      if (error) throw error;
+
+      // 3. Atualiza a lista lateral
+      const novasLojas = lojas.filter(l => l.id !== estoqueOpcoes.id);
+      setLojas(novasLojas);
+      
+      // 4. Se a loja apagada era a que estava aberta na tela, joga o usuário para outra loja
+      if (lojaAtiva?.id === estoqueOpcoes.id) {
+        setLojaAtiva(novasLojas.length > 0 ? novasLojas[0] : null);
+      }
+      
+      setModalApagarVisible(false); // Fecha a janela
+    } catch (error) {
+      Alert.alert("Erro ao apagar", error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // NOVO: Função para mover o estoque para cima ou para baixo
+  const moverEstoque = async (direcao) => {
+    if (!estoqueOpcoes) return;
+
+    // Encontra o índice do estoque atual
+    const indexAtual = lojas.findIndex(l => l.id === estoqueOpcoes.id);
+    
+    // Calcula o índice do alvo com base na direção
+    const indexAlvo = direcao === 'cima' ? indexAtual - 1 : indexAtual + 1;
+
+    // Verifica se o movimento é válido (não pode subir o primeiro nem descer o último)
+    if (indexAlvo < 0 || indexAlvo >= lojas.length) return;
+
+    const lojaAlvo = lojas[indexAlvo];
+
+    setLoading(true);
+    try {
+      // 1. Troca a 'ordem' no banco de dados
+      // Precisamos fazer duas atualizações. 
+      // Para evitar conflitos, uma boa prática é usar os IDs.
+      const ordemAtual = estoqueOpcoes.ordem || indexAtual; // Fallback caso seja null
+      const ordemAlvo = lojaAlvo.ordem || indexAlvo;
+
+      // Atualiza o estoque que foi clicado
+      const { error: err1 } = await supabase
+        .from('lojas')
+        .update({ ordem: ordemAlvo })
+        .eq('id', estoqueOpcoes.id);
+      if (err1) throw err1;
+
+      // Atualiza o estoque que vai trocar de lugar
+      const { error: err2 } = await supabase
+        .from('lojas')
+        .update({ ordem: ordemAtual })
+        .eq('id', lojaAlvo.id);
+      if (err2) throw err2;
+
+      // 2. Atualiza a lista localmente
+      const novasLojas = [...lojas];
+      
+      // Atualiza os valores localmente antes de ordenar
+      novasLojas[indexAtual] = { ...estoqueOpcoes, ordem: ordemAlvo };
+      novasLojas[indexAlvo] = { ...lojaAlvo, ordem: ordemAtual };
+
+      // Ordena a lista com a nova ordem
+      novasLojas.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+      
+      setLojas(novasLojas);
+      setModalOpcoesVisible(false); // Fecha o menu após a ação
+
+    } catch (error) {
+      Alert.alert("Erro ao reordenar", error.message);
     } finally {
       setLoading(false);
     }
@@ -637,123 +755,250 @@ const CustomDrawerContent = (props) => {
   return (
     <View style={{ flex: 1 }}>
       
-      {/* Modal de Criar Estoque */}
+      {/* 1. Modal Original: Criar Estoque */}
       <Modal visible={modalVisible} transparent={true} animationType="fade">
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
           <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#333' }}>Novo Estoque</Text>
-            
-            <TextInput 
-              placeholder="Ex: Loja Centro, Depósito principal..."
-              value={nomeEstoque}
-              onChangeText={setNomeEstoque}
-              style={styles.input}
-            />
-
+            <TextInput placeholder="Ex: Loja Centro..." value={nomeEstoque} onChangeText={setNomeEstoque} style={styles.input} />
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
-              <TouchableOpacity 
-                onPress={() => setModalVisible(false)} 
-                style={{ padding: 12, marginRight: 15 }}
-                disabled={loading}
-              >
+              <TouchableOpacity onPress={() => setModalVisible(false)} style={{ padding: 12, marginRight: 15 }} disabled={loading}>
                 <Text style={{ color: '#666', fontWeight: 'bold' }}>Cancelar</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                onPress={handleCriarEstoque} 
-                disabled={loading}
-                style={{ backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}
-              >
-                <Text style={{ color: '#fff', fontWeight: 'bold' }}>
-                  {loading ? "Salvando..." : "Criar"}
-                </Text>
+              <TouchableOpacity onPress={handleCriarEstoque} disabled={loading} style={{ backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}>
+                <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Salvando..." : "Criar"}</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      <DrawerContentScrollView {...props}>
-        
-        {/* TOPO DO MENU: Criar estoque */}
+      {/* 2. NOVO: Modal do Menu Flutuante (Opções) */}
+      <Modal visible={modalOpcoesVisible} transparent={true} animationType="fade">
         <TouchableOpacity 
-          style={{ flexDirection: 'row', alignItems: 'center', padding: 20, paddingTop: 10 }} 
-          onPress={() => setModalVisible(true)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }} 
+          activeOpacity={1} 
+          onPress={() => setModalOpcoesVisible(false)}
         >
+          <TouchableWithoutFeedback>
+            <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '75%', overflow: 'hidden' }}>
+              <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee' }}>
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333', textAlign: 'center' }}>
+                  {estoqueOpcoes?.nome}
+                </Text>
+              </View>
+              
+              {/* Oculta 'Mover para cima' se já for o primeiro */}
+              {lojas.findIndex(l => l.id === estoqueOpcoes?.id) > 0 && (
+                <TouchableOpacity 
+                  style={{ flexDirection: 'row', alignItems: 'center', padding: 18, borderBottomWidth: 1, borderColor: '#eee' }}
+                  onPress={() => moverEstoque('cima')}
+                  disabled={loading}
+                >
+                  <View style={{ width: 30, alignItems: 'center' }}>
+                    <Ionicons name="arrow-up" size={20} color="#555" />
+                  </View>
+                  <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, color: '#555', fontWeight: 'bold' }}>
+                    {loading ? "Movendo..." : "Mover para cima"}
+                  </Text>
+                  <View style={{ width: 30 }} />
+                </TouchableOpacity>
+              )}
+
+              {/* Oculta 'Mover para baixo' se já for o último */}
+              {lojas.findIndex(l => l.id === estoqueOpcoes?.id) < lojas.length - 1 && (
+                <TouchableOpacity 
+                  style={{ flexDirection: 'row', alignItems: 'center', padding: 18, borderBottomWidth: 1, borderColor: '#eee' }}
+                  onPress={() => moverEstoque('baixo')}
+                  disabled={loading}
+                >
+                  <View style={{ width: 30, alignItems: 'center' }}>
+                    <Ionicons name="arrow-down" size={20} color="#555" />
+                  </View>
+                  <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, color: '#555', fontWeight: 'bold' }}>
+                    {loading ? "Movendo..." : "Mover para baixo"}
+                  </Text>
+                  <View style={{ width: 30 }} />
+                </TouchableOpacity>
+              )}
+
+              {/* Botões originais: Renomear e Apagar */}
+              <TouchableOpacity 
+                style={{ flexDirection: 'row', alignItems: 'center', padding: 18, borderBottomWidth: 1, borderColor: '#eee' }}
+                onPress={() => {
+                  setNovoNome(estoqueOpcoes?.nome || '');
+                  setModalOpcoesVisible(false);
+                  setTimeout(() => setModalRenomearVisible(true), 100);
+                }}
+              >
+                <View style={{ width: 30, alignItems: 'center' }}>
+                  <Ionicons name="pencil" size={20} color="#007AFF" />
+                </View>
+                <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, color: '#007AFF', fontWeight: 'bold' }}>
+                  Renomear estoque
+                </Text>
+                <View style={{ width: 30 }} />
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={{ flexDirection: 'row', alignItems: 'center', padding: 18 }}
+                onPress={() => {
+                  setModalOpcoesVisible(false);
+                  setTimeout(() => setModalApagarVisible(true), 100);
+                }}
+              >
+                <View style={{ width: 30, alignItems: 'center' }}>
+                  <Ionicons name="trash" size={20} color="#d9534f" />
+                </View>
+                <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, color: '#d9534f', fontWeight: 'bold' }}>
+                  Apagar estoque
+                </Text>
+                <View style={{ width: 30 }} />
+              </TouchableOpacity>
+            </View>
+          </TouchableWithoutFeedback>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* 3. NOVO: Modal de Renomear Estoque */}
+      <Modal visible={modalRenomearVisible} transparent={true} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 12 }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#333' }}>Renomear Estoque</Text>
+            <TextInput value={novoNome} onChangeText={setNovoNome} style={styles.input} />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
+              <TouchableOpacity onPress={() => setModalRenomearVisible(false)} style={{ padding: 12, marginRight: 15 }} disabled={loading}>
+                <Text style={{ color: '#666', fontWeight: 'bold' }}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleRenomear} disabled={loading} style={{ backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}>
+                <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Salvando..." : "Salvar"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 4. Modal de Confirmar Exclusão */}
+      <Modal visible={modalApagarVisible} transparent={true} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+          
+          {/* Caixa branca com overflow:hidden para a faixa cinza não vazar as bordas arredondadas */}
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '85%', overflow: 'hidden' }}>
+            
+            {/* CABEÇALHO CINZA (Igual ao de Opções) */}
+            <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="warning" size={22} color="#d9534f" style={{ marginRight: 10 }} />
+              <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>Apagar Estoque?</Text>
+            </View>
+            
+            {/* CORPO DO MODAL (Texto e Botões) */}
+            <View style={{ padding: 20 }}>
+              <Text style={{ fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 20, lineHeight: 22 }}>
+                Tem certeza que deseja apagar <Text style={{ fontWeight: 'bold', color: '#333' }}>{estoqueOpcoes?.nome}</Text>? Todos os produtos cadastrados nele também serão apagados para sempre.
+              </Text>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <TouchableOpacity 
+                  onPress={() => setModalApagarVisible(false)} 
+                  style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} 
+                  disabled={loading}
+                >
+                  <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  onPress={handleApagar} 
+                  disabled={loading} 
+                  style={{ flex: 1, backgroundColor: '#d9534f', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Apagando..." : "Sim, apagar"}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+          </View>
+        </View>
+      </Modal>
+
+      <DrawerContentScrollView {...props}>
+        <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', padding: 20, paddingTop: 10 }} onPress={() => setModalVisible(true)}>
           <Ionicons name="add-circle" size={26} color="#007AFF" style={{ marginRight: 15 }} />
           <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#007AFF' }}>Criar estoque</Text>
         </TouchableOpacity>
 
         <View style={{ height: 1, backgroundColor: '#eee', marginHorizontal: 20, marginBottom: 10 }} />
 
-        {/* --- LISTA DINÂMICA DE ESTOQUES --- */}
+        {/* --- LISTA DINÂMICA DE ESTOQUES (AGORA COM OS TRÊS PONTINHOS) --- */}
         <View style={{ paddingHorizontal: 10 }}>
           {lojas.length === 0 ? (
-            <Text style={{ textAlign: 'center', color: '#999', marginTop: 10, fontSize: 14 }}>
-              Você ainda não possui estoques.
-            </Text>
+            <Text style={{ textAlign: 'center', color: '#999', marginTop: 10, fontSize: 14 }}>Você ainda não possui estoques.</Text>
           ) : (
             lojas.map((loja) => {
-              // Verifica se este estoque da lista é o mesmo que o usuário está visualizando agora
               const isActive = lojaAtiva && lojaAtiva.id === loja.id;
               
               return (
-                <TouchableOpacity 
-                  key={loja.id}
+                // 1. O fundo azul e o arredondamento agora ficam na View "pai" que engloba tudo!
+                <View 
+                  key={loja.id} 
                   style={{ 
                     flexDirection: 'row', 
                     alignItems: 'center', 
-                    paddingVertical: 12,
-                    paddingHorizontal: 10,
-                    borderRadius: 8,
-                    // Se for o ativo, ganha um fundo azul clarinho
+                    marginBottom: 5,
                     backgroundColor: isActive ? '#e6f2ff' : 'transparent',
-                    marginBottom: 5
-                  }} 
-                  onPress={() => {
-                    setLojaAtiva(loja); // Define este estoque como o principal
-                    props.navigation.closeDrawer(); // Fecha o menu na hora
+                    borderRadius: 8,
                   }}
                 >
-                  <Ionicons 
-                    name={isActive ? "storefront" : "storefront-outline"} 
-                    size={22} 
-                    color={isActive ? "#007AFF" : "#555"} 
-                    style={{ marginRight: 15 }} 
-                  />
-                  <Text style={{ 
-                    fontSize: 15, 
-                    fontWeight: isActive ? 'bold' : '500', 
-                    color: isActive ? '#007AFF' : '#555' 
-                  }}>
-                    {loja.nome}
-                  </Text>
-                </TouchableOpacity>
+                  
+                  {/* 2. Área de Selecionar o Estoque (Ocupa o espaço da esquerda) */}
+                  <TouchableOpacity 
+                    style={{ 
+                      flex: 1, 
+                      flexDirection: 'row', 
+                      alignItems: 'center', 
+                      paddingVertical: 12,
+                      paddingLeft: 10,
+                    }} 
+                    onPress={() => {
+                      setLojaAtiva(loja);
+                      props.navigation.closeDrawer();
+                    }}
+                  >
+                    <Ionicons name={isActive ? "storefront" : "storefront-outline"} size={22} color={isActive ? "#007AFF" : "#555"} style={{ marginRight: 15 }} />
+                    <Text style={{ fontSize: 15, fontWeight: isActive ? 'bold' : '500', color: isActive ? '#007AFF' : '#555' }} numberOfLines={1}>
+                      {loja.nome}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* 3. Botão dos 3 pontinhos (Agora dentro do fundo azul) */}
+                  <TouchableOpacity 
+                    style={{ padding: 12, paddingRight: 15 }} 
+                    onPress={() => {
+                      setEstoqueOpcoes(loja); // Avisa pro estado qual loja foi clicada
+                      setModalOpcoesVisible(true); // Abre o menu flutuante
+                    }}
+                  >
+                    {/* Cor dinâmica: Azul se estiver ativo, cinza se não estiver */}
+                    <Ionicons 
+                      name="ellipsis-vertical" 
+                      size={20} 
+                      color={isActive ? "#007AFF" : "#888"} 
+                    />
+                  </TouchableOpacity>
+                  
+                </View>
               )
             })
           )}
         </View>
-
-        {/* Removemos o <DrawerItemList {...props} /> daqui pois agora o menu é 100% customizado por nós! */}
-
       </DrawerContentScrollView>
       
-      {/* RODAPÉ DO MENU */}
       <View style={{ paddingBottom: 20 }}>
         <View style={{ height: 1, backgroundColor: '#eee', marginHorizontal: 20, marginBottom: 10 }} />
-        
-        <TouchableOpacity 
-          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }} 
-          onPress={() => Alert.alert("Configurações", "Em breve!")}
-        >
+        <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }} onPress={() => Alert.alert("Configurações", "Em breve!")}>
           <Ionicons name="settings-outline" size={22} color="#555" style={{ marginRight: 15 }} />
           <Text style={{ fontSize: 14, fontWeight: '500', color: '#555' }}>Configurações</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }} 
-          onPress={handleLogout}
-        >
+        <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }} onPress={handleLogout}>
           <Ionicons name="log-out-outline" size={22} color="#d9534f" style={{ marginRight: 15 }} />
           <Text style={{ fontSize: 14, fontWeight: '500', color: '#d9534f' }}>Desconectar</Text>
         </TouchableOpacity>
@@ -774,7 +1019,12 @@ const MainAppDrawer = () => {
       setIsFetchingLojas(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data, error } = await supabase.from('lojas').select('*').eq('dono_id', user.id);
+        const { data, error } = await supabase
+          .from('lojas')
+          .select('*')
+          .eq('dono_id', user.id)
+          .order('ordem', { ascending: true }); // <--- NOVO: Ordena pela coluna 'ordem'
+
         if (data) {
           setLojas(data);
           if (data.length > 0) {
