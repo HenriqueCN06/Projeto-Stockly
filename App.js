@@ -334,6 +334,25 @@ const EmptyScreen = () => {
   const slideAnim = useRef(new Animated.Value(Dimensions.get('window').height)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current; // NOVO: Controla a sombra do fundo
 
+  const [produtoEditando, setProdutoEditando] = useState(null);
+
+  const abrirModalNovo = () => {
+    setProdutoEditando(null); 
+    setNome(''); setSku(''); setPrecoCusto(''); setPrecoVenda(''); setEstoqueAtual(''); setEstoqueMinimo('');
+    abrirModal();
+  };
+
+  const abrirModalEdicao = (produto) => {
+    setProdutoEditando(produto); 
+    setNome(produto.nome);
+    setSku(produto.sku_barcode && produto.sku_barcode.startsWith('INT-') ? '' : produto.sku_barcode);
+    setPrecoCusto(Number(produto.preco_custo).toFixed(2).replace('.', ','));
+    setPrecoVenda(Number(produto.preco_venda).toFixed(2).replace('.', ','));
+    setEstoqueAtual(produto.estoque_atual.toString());
+    setEstoqueMinimo(produto.estoque_minimo ? produto.estoque_minimo.toString() : '');
+    abrirModal();
+  };
+
   const abrirModal = () => {
     setModalVisible(true);
     // Animated.parallel faz as duas animações rodarem no exato milissegundo!
@@ -386,7 +405,7 @@ const EmptyScreen = () => {
     }
   }, [lojaAtiva]);
 
-  const handleAddProduto = async () => {
+  const handleSalvarProduto = async () => {
     if (!nome || !precoCusto || !precoVenda || !estoqueAtual) {
       Alert.alert("Atenção", "Preencha os campos obrigatórios (*).");
       return;
@@ -398,37 +417,59 @@ const EmptyScreen = () => {
       const vendaNum = parseFloat(precoVenda.replace(',', '.'));
       const atualNum = parseInt(estoqueAtual, 10);
       const minNum = estoqueMinimo ? parseInt(estoqueMinimo, 10) : 5;
-      
-      // NOVO: Se o SKU estiver vazio, gera um código interno usando a data/hora exata!
       const skuFinal = sku.trim() === '' ? `INT-${Date.now()}` : sku.trim();
 
-      const { data, error } = await supabase
-        .from('produtos')
-        .insert([{
-          loja_id: lojaAtiva.id,
-          nome: nome,
-          sku_barcode: skuFinal,
-          preco_custo: custoNum,
-          preco_venda: vendaNum,
-          estoque_atual: atualNum,
-          estoque_minimo: minNum
-        }])
-        .select()
-        .single();
+      if (produtoEditando) {
+        // MODO EDIÇÃO: Atualiza o produto existente
+        const { data, error } = await supabase
+          .from('produtos')
+          .update({
+            nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, preco_venda: vendaNum,
+            estoque_atual: atualNum, estoque_minimo: minNum
+          })
+          .eq('id', produtoEditando.id)
+          .select().single();
 
-      if (error) throw error;
+        if (error) throw error;
+        
+        // Atualiza a lista na tela
+        setProducts(products.map(p => p.id === produtoEditando.id ? data : p));
+      } else {
+        // MODO NOVO: Insere um produto do zero
+        const { data, error } = await supabase
+          .from('produtos')
+          .insert([{
+            loja_id: lojaAtiva.id, nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, 
+            preco_venda: vendaNum, estoque_atual: atualNum, estoque_minimo: minNum
+          }])
+          .select().single();
 
-      addProduct(data);
-      Alert.alert("Sucesso!", "Produto adicionado ao estoque.");
-      setNome(''); setSku(''); setPrecoCusto(''); setPrecoVenda(''); setEstoqueAtual(''); setEstoqueMinimo('');
+        if (error) throw error;
+        addProduct(data);
+      }
       
-      fecharModal(); // Fecha com a animação suave
-
+      fecharModal();
     } catch (error) {
       Alert.alert("Erro ao salvar", error.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  // NOVO: Função extra para apagar o produto de dentro do modal de edição
+  const handleApagarProduto = () => {
+    Alert.alert("Apagar Produto", `Tem certeza que deseja apagar "${produtoEditando.nome}"?`, [
+      { text: "Cancelar", style: "cancel" },
+      { text: "Apagar", style: "destructive", onPress: async () => {
+          setLoading(true);
+          const { error } = await supabase.from('produtos').delete().eq('id', produtoEditando.id);
+          setLoading(false);
+          if (!error) {
+            setProducts(products.filter(p => p.id !== produtoEditando.id));
+            fecharModal();
+          }
+      }}
+    ]);
   };
 
   if (isFetchingLojas) {
@@ -463,7 +504,11 @@ const EmptyScreen = () => {
               keyExtractor={(item) => item.id}
               contentContainerStyle={{ padding: 15 }}
               renderItem={({ item }) => (
-                <View style={{ backgroundColor: '#fff', padding: 15, borderRadius: 8, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 }}>
+                <TouchableOpacity 
+                  activeOpacity={0.7} 
+                  onPress={() => abrirModalEdicao(item)} 
+                  style={{ backgroundColor: '#fff', padding: 15, borderRadius: 8, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 }}
+                >
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.nome}</Text>
                     {item.sku_barcode && !item.sku_barcode.startsWith('INT-') ? <Text style={{ fontSize: 12, color: '#888' }}>SKU: {item.sku_barcode}</Text> : null}
@@ -481,7 +526,7 @@ const EmptyScreen = () => {
                       {item.estoque_atual}
                     </Text>
                   </View>
-                </View>
+                </TouchableOpacity>
               )}
             />
           )}
@@ -490,7 +535,7 @@ const EmptyScreen = () => {
         <View style={{ height: 70, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#e0e0e0', justifyContent: 'center', alignItems: 'center', flexDirection: 'row' }}>
           <TouchableOpacity 
             style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center', marginTop: -40, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 }}
-            onPress={abrirModal} // <--- Chama a animação de abrir
+            onPress={abrirModalNovo} // <--- TROQUE PARA abrirModalNovo
           >
             <Ionicons name="add" size={32} color="#fff" />
           </TouchableOpacity>
@@ -520,7 +565,18 @@ const EmptyScreen = () => {
               maxHeight: '85%',
               transform: [{ translateY: slideAnim }] // <--- Deslizando
             }}>
-              <Text style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 15, color: '#333' }}>Novo Produto</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>
+                  {produtoEditando ? "Editar Produto" : "Novo Produto"}
+                </Text>
+                
+                {/* A lixeira só aparece se existir um produto sendo editado */}
+                {produtoEditando && (
+                  <TouchableOpacity onPress={handleApagarProduto} style={{ padding: 5 }}>
+                    <Ionicons name="trash-outline" size={24} color="#d9534f" />
+                  </TouchableOpacity>
+                )}
+              </View>
               <ScrollView showsVerticalScrollIndicator={false}>
                 <TextInput placeholder="Nome do Produto *" value={nome} onChangeText={setNome} style={styles.input} />
                 <TextInput placeholder="Código de Barras / SKU (Opcional)" value={sku} onChangeText={setSku} style={styles.input} keyboardType="numeric" />
@@ -536,8 +592,10 @@ const EmptyScreen = () => {
                   <TouchableOpacity onPress={fecharModal} style={{ padding: 12, marginRight: 15 }} disabled={loading}>
                     <Text style={{ color: '#666', fontWeight: 'bold' }}>Cancelar</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={handleAddProduto} disabled={loading} style={{ backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}>
-                    <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Salvando..." : "Salvar Produto"}</Text>
+                  <TouchableOpacity onPress={handleSalvarProduto} disabled={loading} style={{ backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}>
+                    <Text style={{ color: '#fff', fontWeight: 'bold' }}>
+                      {loading ? "Salvando..." : (produtoEditando ? "Atualizar" : "Salvar")}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </ScrollView>
