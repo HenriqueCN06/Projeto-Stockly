@@ -335,6 +335,7 @@ const EmptyScreen = () => {
   const fadeAnim = useRef(new Animated.Value(0)).current; // NOVO: Controla a sombra do fundo
 
   const [produtoEditando, setProdutoEditando] = useState(null);
+  const [modalApagarProdutoVisible, setModalApagarProdutoVisible] = useState(false);
 
   const abrirModalNovo = () => {
     setProdutoEditando(null); 
@@ -457,19 +458,54 @@ const EmptyScreen = () => {
   };
 
   // NOVO: Função extra para apagar o produto de dentro do modal de edição
+  // Função que apenas ABRE a janela de confirmação
   const handleApagarProduto = () => {
-    Alert.alert("Apagar Produto", `Tem certeza que deseja apagar "${produtoEditando.nome}"?`, [
-      { text: "Cancelar", style: "cancel" },
-      { text: "Apagar", style: "destructive", onPress: async () => {
-          setLoading(true);
-          const { error } = await supabase.from('produtos').delete().eq('id', produtoEditando.id);
-          setLoading(false);
-          if (!error) {
-            setProducts(products.filter(p => p.id !== produtoEditando.id));
-            fecharModal();
-          }
-      }}
-    ]);
+    setModalApagarProdutoVisible(true);
+  };
+
+  // Função que REALMENTE vai no banco e apaga
+  const confirmarApagarProduto = async () => {
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('produtos').delete().eq('id', produtoEditando.id);
+      if (error) throw error;
+      
+      // Remove da tela
+      setProducts(products.filter(p => p.id !== produtoEditando.id));
+      
+      // Fecha a janela de confirmação E o formulário
+      setModalApagarProdutoVisible(false);
+      fecharModal(); 
+    } catch (error) {
+      Alert.alert("Erro ao apagar", error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // NOVO: Função de Ajuste Rápido (+ e -)
+  const handleAjusteEstoque = async (produto, mudanca) => {
+    const novoEstoque = produto.estoque_atual + mudanca;
+    
+    // Trava para não deixar o estoque ficar negativo
+    if (novoEstoque < 0) return; 
+
+    // 1. Atualiza a tela instantaneamente (Otimista)
+    setProducts(products.map(p => p.id === produto.id ? { ...p, estoque_atual: novoEstoque } : p));
+
+    try {
+      // 2. Atualiza no banco de dados silenciosamente
+      const { error } = await supabase
+        .from('produtos')
+        .update({ estoque_atual: novoEstoque })
+        .eq('id', produto.id);
+
+      if (error) throw error;
+    } catch (error) {
+      // Se der erro de internet, desfaz a mudança na tela e avisa
+      setProducts(products.map(p => p.id === produto.id ? { ...p, estoque_atual: produto.estoque_atual } : p));
+      Alert.alert("Erro", "Não foi possível sincronizar o estoque.");
+    }
   };
 
   if (isFetchingLojas) {
@@ -509,22 +545,46 @@ const EmptyScreen = () => {
                   onPress={() => abrirModalEdicao(item)} 
                   style={{ backgroundColor: '#fff', padding: 15, borderRadius: 8, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 }}
                 >
-                  <View style={{ flex: 1 }}>
+                  {/* Lado Esquerdo: Info do Produto */}
+                  <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.nome}</Text>
                     {item.sku_barcode && !item.sku_barcode.startsWith('INT-') ? <Text style={{ fontSize: 12, color: '#888' }}>SKU: {item.sku_barcode}</Text> : null}
                     <Text style={{ fontSize: 14, color: '#007AFF', marginTop: 5, fontWeight: '500' }}>
                       R$ {Number(item.preco_venda).toFixed(2).replace('.', ',')}
                     </Text>
                   </View>
-                  <View style={{ alignItems: 'flex-end', marginLeft: 10 }}>
-                    <Text style={{ fontSize: 12, color: '#666' }}>Estoque</Text>
-                    <Text style={{ 
-                      fontSize: 22, 
-                      fontWeight: 'bold', 
-                      color: item.estoque_atual <= item.estoque_minimo ? '#d9534f' : '#4CAF50' 
-                    }}>
-                      {item.estoque_atual}
-                    </Text>
+
+                  {/* Lado Direito: Controles Rápidos de Estoque */}
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12, color: '#666', marginBottom: 5 }}>Estoque</Text>
+                    
+                    {/* Cápsula dos botões */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 8, padding: 4 }}>
+                      <TouchableOpacity 
+                        onPress={() => handleAjusteEstoque(item, -1)}
+                        style={{ width: 32, height: 32, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}
+                      >
+                        <Ionicons name="remove" size={20} color="#d9534f" />
+                      </TouchableOpacity>
+
+                      <Text style={{ 
+                        fontSize: 18, 
+                        fontWeight: 'bold', 
+                        // Continua ficando vermelho se atingir o mínimo!
+                        color: item.estoque_atual <= item.estoque_minimo ? '#d9534f' : '#4CAF50',
+                        width: 45,
+                        textAlign: 'center'
+                      }}>
+                        {item.estoque_atual}
+                      </Text>
+
+                      <TouchableOpacity 
+                        onPress={() => handleAjusteEstoque(item, 1)}
+                        style={{ width: 32, height: 32, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}
+                      >
+                        <Ionicons name="add" size={20} color="#007AFF" />
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </TouchableOpacity>
               )}
@@ -588,11 +648,21 @@ const EmptyScreen = () => {
                   <TextInput placeholder="Estoque Inicial *" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                   <TextInput placeholder="Estoque Mín." value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                 </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10, paddingBottom: 20 }}>
-                  <TouchableOpacity onPress={fecharModal} style={{ padding: 12, marginRight: 15 }} disabled={loading}>
-                    <Text style={{ color: '#666', fontWeight: 'bold' }}>Cancelar</Text>
+                {/* BOTÕES PADRONIZADOS: PRODUTO */}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, paddingBottom: 20 }}>
+                  <TouchableOpacity 
+                    onPress={fecharModal} 
+                    style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} 
+                    disabled={loading}
+                  >
+                    <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={handleSalvarProduto} disabled={loading} style={{ backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}>
+                  
+                  <TouchableOpacity 
+                    onPress={handleSalvarProduto} 
+                    disabled={loading} 
+                    style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}
+                  >
                     <Text style={{ color: '#fff', fontWeight: 'bold' }}>
                       {loading ? "Salvando..." : (produtoEditando ? "Atualizar" : "Salvar")}
                     </Text>
@@ -601,6 +671,44 @@ const EmptyScreen = () => {
               </ScrollView>
             </Animated.View>
 
+          </View>
+        </Modal>
+
+        {/* MODAL DE CONFIRMAR EXCLUSÃO DO PRODUTO (Estilo Premium) */}
+        <Modal visible={modalApagarProdutoVisible} transparent={true} animationType="fade">
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '85%', overflow: 'hidden' }}>
+              
+              <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="warning" size={22} color="#d9534f" style={{ marginRight: 10 }} />
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>Apagar Produto?</Text>
+              </View>
+              
+              <View style={{ padding: 20 }}>
+                <Text style={{ fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 20, lineHeight: 22 }}>
+                  Tem certeza que deseja apagar <Text style={{ fontWeight: 'bold', color: '#333' }}>{produtoEditando?.nome}</Text>? 
+                </Text>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <TouchableOpacity 
+                    onPress={() => setModalApagarProdutoVisible(false)} 
+                    style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} 
+                    disabled={loading}
+                  >
+                    <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    onPress={confirmarApagarProduto} 
+                    disabled={loading} 
+                    style={{ flex: 1, backgroundColor: '#d9534f', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Apagando..." : "Sim, apagar"}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+            </View>
           </View>
         </Modal>
 
@@ -819,11 +927,21 @@ const CustomDrawerContent = (props) => {
           <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#333' }}>Novo Estoque</Text>
             <TextInput placeholder="Ex: Loja Centro..." value={nomeEstoque} onChangeText={setNomeEstoque} style={styles.input} />
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
-              <TouchableOpacity onPress={() => setModalVisible(false)} style={{ padding: 12, marginRight: 15 }} disabled={loading}>
-                <Text style={{ color: '#666', fontWeight: 'bold' }}>Cancelar</Text>
+            {/* BOTÕES PADRONIZADOS: NOVO ESTOQUE */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
+              <TouchableOpacity 
+                onPress={() => setModalVisible(false)} 
+                style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} 
+                disabled={loading}
+              >
+                <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={handleCriarEstoque} disabled={loading} style={{ backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}>
+              
+              <TouchableOpacity 
+                onPress={handleCriarEstoque} 
+                disabled={loading} 
+                style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}
+              >
                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Salvando..." : "Criar"}</Text>
               </TouchableOpacity>
             </View>
@@ -924,11 +1042,21 @@ const CustomDrawerContent = (props) => {
           <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#333' }}>Renomear Estoque</Text>
             <TextInput value={novoNome} onChangeText={setNovoNome} style={styles.input} />
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
-              <TouchableOpacity onPress={() => setModalRenomearVisible(false)} style={{ padding: 12, marginRight: 15 }} disabled={loading}>
-                <Text style={{ color: '#666', fontWeight: 'bold' }}>Cancelar</Text>
+            {/* BOTÕES PADRONIZADOS: RENOMEAR ESTOQUE */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
+              <TouchableOpacity 
+                onPress={() => setModalRenomearVisible(false)} 
+                style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} 
+                disabled={loading}
+              >
+                <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={handleRenomear} disabled={loading} style={{ backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}>
+              
+              <TouchableOpacity 
+                onPress={handleRenomear} 
+                disabled={loading} 
+                style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}
+              >
                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Salvando..." : "Salvar"}</Text>
               </TouchableOpacity>
             </View>
