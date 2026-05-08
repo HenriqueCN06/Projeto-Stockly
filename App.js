@@ -130,6 +130,7 @@ const LoginScreen = ({ navigation }) => {
 
       <TextInput 
         placeholder="E-mail" 
+        placeholderTextColor="#999"
         style={styles.input} 
         onChangeText={setEmail} 
         value={email}
@@ -140,6 +141,7 @@ const LoginScreen = ({ navigation }) => {
       <View style={styles.passwordContainer}>
         <TextInput 
           placeholder="Senha" 
+          placeholderTextColor="#999"
           style={styles.passwordInput} 
           onChangeText={setPassword} 
           value={password}
@@ -275,12 +277,13 @@ const SignUpScreen = ({ navigation }) => {
 
       <Text style={styles.logoText}>CRIAR CONTA</Text>
 
-      <TextInput placeholder="Nome" style={styles.input} onChangeText={setNome} value={nome} />
-      <TextInput placeholder="E-mail" style={styles.input} onChangeText={setEmail} value={email} keyboardType="email-address" autoCapitalize="none" />
+      <TextInput placeholder="Nome" placeholderTextColor="#999" style={styles.input} onChangeText={setNome} value={nome} />
+      <TextInput placeholder="E-mail" placeholderTextColor="#999" style={styles.input} onChangeText={setEmail} value={email} keyboardType="email-address" autoCapitalize="none" />
       
       <View style={styles.passwordContainer}>
         <TextInput 
           placeholder="Senha" 
+          placeholderTextColor="#999"
           style={styles.passwordInput} 
           onChangeText={setSenha} 
           value={senha} 
@@ -294,6 +297,7 @@ const SignUpScreen = ({ navigation }) => {
       <View style={styles.passwordContainer}>
         <TextInput 
           placeholder="Confirmar Senha" 
+          placeholderTextColor="#999"
           style={styles.passwordInput} 
           onChangeText={setConfirmaSenha} 
           value={confirmaSenha} 
@@ -338,7 +342,7 @@ const EmptyScreen = () => {
   const slideAnim = useRef(new Animated.Value(Dimensions.get('window').height)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scrollY = useRef(new Animated.Value(0)).current;
-  const SEARCH_BAR_HEIGHT = 74; // Altura total da barra (48 + paddings)
+  const SEARCH_BAR_HEIGHT = 65; // Altura total da barra (48 + paddings)
   const scrollYClamped = Animated.diffClamp(scrollY, 0, SEARCH_BAR_HEIGHT);
   const searchBarTranslateY = scrollYClamped.interpolate({
     inputRange: [0, SEARCH_BAR_HEIGHT],
@@ -507,20 +511,20 @@ const EmptyScreen = () => {
 
   if (lojaAtiva) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
+      <View style={{ flex: 1, backgroundColor: '#f5f5f5', overflow: 'hidden' }}>
         
-        {/* --- NOVA BARRA DE PESQUISA E BOTÃO DE FILTRO (ANIMADA) --- */}
+        {/* --- NOVA BARRA DE PESQUISA E BOTÃO DE FILTRO --- */}
         <Animated.View style={{ 
           position: 'absolute', 
           top: 0, left: 0, right: 0, 
-          zIndex: 10, 
-          backgroundColor: '#f5f5f5', 
-          transform: [{ translateY: searchBarTranslateY }], 
+          zIndex: 10,       // <-- Garante que fique na frente na Web/iOS
+          elevation: 10,    // <-- Garante que vença a sombra dos produtos no Android
+          backgroundColor: 'transparent', 
+          transform: [{ translateY: searchBarTranslateY }],
           flexDirection: 'row', alignItems: 'center', 
           paddingHorizontal: 15, 
-          paddingVertical: 12,          // <-- ESPAÇAMENTO IGUAL EM CIMA E EMBAIXO
-          borderBottomWidth: 1,
-          borderBottomColor: '#ccc'
+          paddingTop: 16,       // <-- 16px em cima
+          paddingBottom: 16     // <-- 16px embaixo para centralizar perfeitamente
         }}>
           
           <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
@@ -575,7 +579,7 @@ const EmptyScreen = () => {
                 { useNativeDriver: true }
               )}
               contentContainerStyle={{ 
-                paddingTop: SEARCH_BAR_HEIGHT + 15, 
+                paddingTop: SEARCH_BAR_HEIGHT + 16, 
                 paddingHorizontal: 15, 
                 paddingBottom: 15 
               }}
@@ -653,7 +657,7 @@ const EmptyScreen = () => {
         </Modal>
 
         {/* (MANTEVE O BOTÃO DE ADICIONAR E OS OUTROS MODAIS IGUAIS...) */}
-        <View style={{ height: 70, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#e0e0e0', justifyContent: 'center', alignItems: 'center', flexDirection: 'row' }}>
+        <View style={{ height: Platform.OS === 'android' ? 90 : 70, paddingBottom: Platform.OS === 'android' ? 20 : 0, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#e0e0e0', justifyContent: 'center', alignItems: 'center', flexDirection: 'row' }}>
           <TouchableOpacity style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center', marginTop: -40, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 }} onPress={abrirModalNovo}>
             <Ionicons name="add" size={32} color="#fff" />
           </TouchableOpacity>
@@ -665,24 +669,44 @@ const EmptyScreen = () => {
               <Animated.View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: '#000', opacity: fadeAnim }} />
             </TouchableWithoutFeedback>
             <Animated.View style={{ width: '100%', backgroundColor: '#fff', padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', transform: [{ translateY: slideAnim }] }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-                <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>{produtoEditando ? "Editar Produto" : "Novo Produto"}</Text>
-                {produtoEditando && (
-                  <TouchableOpacity onPress={handleApagarProduto} style={{ padding: 5 }}>
-                    <Ionicons name="trash-outline" size={24} color="#d9534f" />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                
+                {/* TÍTULO À ESQUERDA */}
+                <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>
+                  {produtoEditando ? "Editar Produto" : "Novo Produto"}
+                </Text>
+                
+                {/* ÍCONES À DIREITA */}
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  
+                  {/* Ícone de Código de Barras (Aparece tanto na criação quanto na edição) */}
+                  <TouchableOpacity 
+                    onPress={() => Alert.alert("Scanner", "Em breve a câmera abrirá aqui!")} 
+                    style={{ padding: 5, marginRight: produtoEditando ? 15 : 0 }}
+                  >
+                    <Ionicons name="barcode-outline" size={28} color="#007AFF" />
                   </TouchableOpacity>
-                )}
+
+                  {/* Ícone de Lixeira (Só aparece se estiver editando) */}
+                  {produtoEditando && (
+                    <TouchableOpacity onPress={handleApagarProduto} style={{ padding: 5 }}>
+                      <Ionicons name="trash-outline" size={24} color="#d9534f" />
+                    </TouchableOpacity>
+                  )}
+                  
+                </View>
+
               </View>
               <ScrollView showsVerticalScrollIndicator={false}>
-                <TextInput placeholder="Nome do Produto *" value={nome} onChangeText={setNome} style={styles.input} />
-                <TextInput placeholder="Código de Barras / SKU (Opcional)" value={sku} onChangeText={setSku} style={styles.input} keyboardType="numeric" />
+                <TextInput placeholder="Nome do Produto *" placeholderTextColor="#999" value={nome} onChangeText={setNome} style={styles.input} />
+                <TextInput placeholder="Código de Barras / SKU (Opcional)" placeholderTextColor="#999" value={sku} onChangeText={setSku} style={styles.input} keyboardType="numeric" />
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <TextInput placeholder="Custo (R$) *" value={precoCusto} onChangeText={setPrecoCusto} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
-                  <TextInput placeholder="Venda (R$) *" value={precoVenda} onChangeText={setPrecoVenda} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                  <TextInput placeholder="Custo (R$) *" placeholderTextColor="#999" value={precoCusto} onChangeText={setPrecoCusto} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                  <TextInput placeholder="Venda (R$) *" placeholderTextColor="#999" value={precoVenda} onChangeText={setPrecoVenda} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <TextInput placeholder="Estoque Inicial *" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
-                  <TextInput placeholder="Estoque Mín." value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                  <TextInput placeholder="Estoque Inicial *" placeholderTextColor="#999" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                  <TextInput placeholder="Estoque Mín." placeholderTextColor="#999" value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, paddingBottom: 20 }}>
                   <TouchableOpacity onPress={fecharModal} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} disabled={loading}>
@@ -932,7 +956,7 @@ const CustomDrawerContent = (props) => {
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
           <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#333' }}>Novo Estoque</Text>
-            <TextInput placeholder="Ex: Loja Centro..." value={nomeEstoque} onChangeText={setNomeEstoque} style={styles.input} />
+            <TextInput placeholder="Ex: Loja Centro..." placeholderTextColor="#999" value={nomeEstoque} onChangeText={setNomeEstoque} style={styles.input} />
             {/* BOTÕES PADRONIZADOS: NOVO ESTOQUE */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
               <TouchableOpacity 
@@ -1184,7 +1208,7 @@ const CustomDrawerContent = (props) => {
         </View>
       </DrawerContentScrollView>
       
-      <View style={{ paddingBottom: 20 }}>
+      <View style={{ paddingBottom: Platform.OS === 'android' ? 40 : 20 }}>
         <View style={{ height: 1, backgroundColor: '#eee', marginHorizontal: 20, marginBottom: 10 }} />
         <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }} onPress={() => Alert.alert("Configurações", "Em breve!")}>
           <Ionicons name="settings-outline" size={22} color="#555" style={{ marginRight: 15 }} />
@@ -1315,9 +1339,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: 'bold' },
   subtitle: { marginTop: 20, fontWeight: 'bold' },
   item: { padding: 15, borderBottomWidth: 1, borderColor: '#eee' },
-  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 15, marginBottom: 15, backgroundColor: '#fafafa' },
+  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 15, marginBottom: 15, backgroundColor: '#fafafa', color: '#333' },
   passwordContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ccc', borderRadius: 8, marginBottom: 15, backgroundColor: '#fafafa' },
-  passwordInput: { flex: 1, padding: 15 },
+  passwordInput: { flex: 1, padding: 15, color: '#333' },
   eyeIcon: { padding: 15 },
   button: { backgroundColor: '#ddd', padding: 15, marginTop: 10, alignItems: 'center', borderRadius: 8 },
   buttonText: { fontWeight: 'bold' },
