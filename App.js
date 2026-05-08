@@ -320,6 +320,11 @@ const EmptyScreen = () => {
   const addProduct = useStore(state => state.addProduct);
   const [loadingProducts, setLoadingProducts] = useState(false);
 
+  // --- NOVOS ESTADOS PARA PESQUISA E FILTRO ---
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortOption, setSortOption] = useState('alpha-asc'); // Ordenação padrão: A-Z
+  const [modalSortVisible, setModalSortVisible] = useState(false);
+
   // Estados do Formulário
   const [modalVisible, setModalVisible] = useState(false);
   const [nome, setNome] = useState('');
@@ -330,12 +335,58 @@ const EmptyScreen = () => {
   const [estoqueMinimo, setEstoqueMinimo] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // --- MÁGICA DA ANIMAÇÃO ---
   const slideAnim = useRef(new Animated.Value(Dimensions.get('window').height)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current; // NOVO: Controla a sombra do fundo
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const SEARCH_BAR_HEIGHT = 74; // Altura total da barra (48 + paddings)
+  const scrollYClamped = Animated.diffClamp(scrollY, 0, SEARCH_BAR_HEIGHT);
+  const searchBarTranslateY = scrollYClamped.interpolate({
+    inputRange: [0, SEARCH_BAR_HEIGHT],
+    outputRange: [0, -SEARCH_BAR_HEIGHT], // Empurra a barra para cima
+  });
 
   const [produtoEditando, setProdutoEditando] = useState(null);
   const [modalApagarProdutoVisible, setModalApagarProdutoVisible] = useState(false);
+
+  // --- LÓGICA DE FILTRAGEM E ORDENAÇÃO INSTANTÂNEA ---
+  const getProcessedProducts = () => {
+    // 1. Primeiro filtramos pelo que foi digitado (Pesquisa por Nome ou SKU)
+    let filtered = products.filter(p => {
+      const term = searchQuery.toLowerCase();
+      const nomeMatch = p.nome.toLowerCase().includes(term);
+      const skuMatch = p.sku_barcode && p.sku_barcode.toLowerCase().includes(term);
+      return nomeMatch || skuMatch;
+    });
+
+    // 2. Depois ordenamos a lista filtrada com base na opção selecionada
+    return filtered.sort((a, b) => {
+      switch (sortOption) {
+        case 'qty-desc': return b.estoque_atual - a.estoque_atual;
+        case 'qty-asc': return a.estoque_atual - b.estoque_atual;
+        case 'price-desc': return b.preco_venda - a.preco_venda;
+        case 'price-asc': return a.preco_venda - b.preco_venda;
+        case 'time-new': return a.id > b.id ? -1 : 1; // Mais novo primeiro
+        case 'time-old': return a.id < b.id ? -1 : 1; // Mais antigo primeiro
+        case 'alpha-desc': return b.nome.localeCompare(a.nome);
+        case 'alpha-asc': 
+        default: return a.nome.localeCompare(b.nome);
+      }
+    });
+  };
+
+  const processedProducts = getProcessedProducts(); // Lista final que vai para a tela
+
+  // Opções do Modal de Filtro
+  const sortOptionsList = [
+    { id: 'alpha-asc', label: 'Ordem alfabética (A-Z)' },
+    { id: 'alpha-desc', label: 'Ordem alfabética (Z-A)' },
+    { id: 'qty-desc', label: 'Quantidade (Maior p/ menor)' },
+    { id: 'qty-asc', label: 'Quantidade (Menor p/ maior)' },
+    { id: 'price-desc', label: 'Preço (Maior p/ menor)' },
+    { id: 'price-asc', label: 'Preço (Menor p/ maior)' },
+    { id: 'time-new', label: 'Mais recentes' },
+    { id: 'time-old', label: 'Mais antigos' },
+  ];
 
   const abrirModalNovo = () => {
     setProdutoEditando(null); 
@@ -356,38 +407,18 @@ const EmptyScreen = () => {
 
   const abrirModal = () => {
     setModalVisible(true);
-    // Animated.parallel faz as duas animações rodarem no exato milissegundo!
     Animated.parallel([
-      Animated.timing(slideAnim, {
-        toValue: 0, // Caixa desliza para cima
-        duration: 300,
-        useNativeDriver: true,
-      }),
-      Animated.timing(fadeAnim, {
-        toValue: 0.5, // Fundo vai até 50% de escuridão
-        duration: 300,
-        useNativeDriver: true,
-      })
+      Animated.timing(slideAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 0.5, duration: 300, useNativeDriver: true })
     ]).start();
   };
 
   const fecharModal = () => {
     Animated.parallel([
-      Animated.timing(slideAnim, {
-        toValue: Dimensions.get('window').height, // Caixa desliza para baixo
-        duration: 300,
-        useNativeDriver: true,
-      }),
-      Animated.timing(fadeAnim, {
-        toValue: 0, // Fundo clareia totalmente
-        duration: 300,
-        useNativeDriver: true,
-      })
-    ]).start(() => {
-      setModalVisible(false); // Só desmonta a tela no final de tudo
-    });
+      Animated.timing(slideAnim, { toValue: Dimensions.get('window').height, duration: 300, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true })
+    ]).start(() => setModalVisible(false));
   };
-  // --------------------------
 
   useEffect(() => {
     if (lojaAtiva) {
@@ -397,7 +428,7 @@ const EmptyScreen = () => {
           .from('produtos')
           .select('*')
           .eq('loja_id', lojaAtiva.id)
-          .order('nome', { ascending: true });
+          .order('nome', { ascending: true }); // Apenas o fetch base
 
         if (data) setProducts(data);
         setLoadingProducts(false);
@@ -411,7 +442,6 @@ const EmptyScreen = () => {
       Alert.alert("Atenção", "Preencha os campos obrigatórios (*).");
       return;
     }
-
     setLoading(true);
     try {
       const custoNum = parseFloat(precoCusto.replace(',', '.'));
@@ -421,34 +451,18 @@ const EmptyScreen = () => {
       const skuFinal = sku.trim() === '' ? `INT-${Date.now()}` : sku.trim();
 
       if (produtoEditando) {
-        // MODO EDIÇÃO: Atualiza o produto existente
-        const { data, error } = await supabase
-          .from('produtos')
-          .update({
-            nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, preco_venda: vendaNum,
-            estoque_atual: atualNum, estoque_minimo: minNum
-          })
-          .eq('id', produtoEditando.id)
-          .select().single();
-
+        const { data, error } = await supabase.from('produtos').update({
+            nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, preco_venda: vendaNum, estoque_atual: atualNum, estoque_minimo: minNum
+          }).eq('id', produtoEditando.id).select().single();
         if (error) throw error;
-        
-        // Atualiza a lista na tela
         setProducts(products.map(p => p.id === produtoEditando.id ? data : p));
       } else {
-        // MODO NOVO: Insere um produto do zero
-        const { data, error } = await supabase
-          .from('produtos')
-          .insert([{
-            loja_id: lojaAtiva.id, nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, 
-            preco_venda: vendaNum, estoque_atual: atualNum, estoque_minimo: minNum
-          }])
-          .select().single();
-
+        const { data, error } = await supabase.from('produtos').insert([{
+            loja_id: lojaAtiva.id, nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, preco_venda: vendaNum, estoque_atual: atualNum, estoque_minimo: minNum
+          }]).select().single();
         if (error) throw error;
         addProduct(data);
       }
-      
       fecharModal();
     } catch (error) {
       Alert.alert("Erro ao salvar", error.message);
@@ -457,23 +471,14 @@ const EmptyScreen = () => {
     }
   };
 
-  // NOVO: Função extra para apagar o produto de dentro do modal de edição
-  // Função que apenas ABRE a janela de confirmação
-  const handleApagarProduto = () => {
-    setModalApagarProdutoVisible(true);
-  };
+  const handleApagarProduto = () => setModalApagarProdutoVisible(true);
 
-  // Função que REALMENTE vai no banco e apaga
   const confirmarApagarProduto = async () => {
     setLoading(true);
     try {
       const { error } = await supabase.from('produtos').delete().eq('id', produtoEditando.id);
       if (error) throw error;
-      
-      // Remove da tela
       setProducts(products.filter(p => p.id !== produtoEditando.id));
-      
-      // Fecha a janela de confirmação E o formulário
       setModalApagarProdutoVisible(false);
       fecharModal(); 
     } catch (error) {
@@ -483,42 +488,66 @@ const EmptyScreen = () => {
     }
   };
 
-  // NOVO: Função de Ajuste Rápido (+ e -)
   const handleAjusteEstoque = async (produto, mudanca) => {
     const novoEstoque = produto.estoque_atual + mudanca;
-    
-    // Trava para não deixar o estoque ficar negativo
     if (novoEstoque < 0) return; 
-
-    // 1. Atualiza a tela instantaneamente (Otimista)
     setProducts(products.map(p => p.id === produto.id ? { ...p, estoque_atual: novoEstoque } : p));
-
     try {
-      // 2. Atualiza no banco de dados silenciosamente
-      const { error } = await supabase
-        .from('produtos')
-        .update({ estoque_atual: novoEstoque })
-        .eq('id', produto.id);
-
+      const { error } = await supabase.from('produtos').update({ estoque_atual: novoEstoque }).eq('id', produto.id);
       if (error) throw error;
     } catch (error) {
-      // Se der erro de internet, desfaz a mudança na tela e avisa
       setProducts(products.map(p => p.id === produto.id ? { ...p, estoque_atual: produto.estoque_atual } : p));
       Alert.alert("Erro", "Não foi possível sincronizar o estoque.");
     }
   };
 
   if (isFetchingLojas) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f5f5f5' }}>
-        <ActivityIndicator size="large" color="#007AFF" />
-      </View>
-    );
+    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f5f5f5' }}><ActivityIndicator size="large" color="#007AFF" /></View>;
   }
 
   if (lojaAtiva) {
     return (
       <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
+        
+        {/* --- NOVA BARRA DE PESQUISA E BOTÃO DE FILTRO (ANIMADA) --- */}
+        <Animated.View style={{ 
+          position: 'absolute', 
+          top: 0, left: 0, right: 0, 
+          zIndex: 10, 
+          backgroundColor: '#f5f5f5', 
+          transform: [{ translateY: searchBarTranslateY }], 
+          flexDirection: 'row', alignItems: 'center', 
+          paddingHorizontal: 15, 
+          paddingVertical: 12,          // <-- ESPAÇAMENTO IGUAL EM CIMA E EMBAIXO
+          borderBottomWidth: 1,
+          borderBottomColor: '#ccc'
+        }}>
+          
+          <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
+            <Ionicons name="search" size={20} color="#64748b" />
+            <TextInput 
+              placeholder="Pesquisar produto ou SKU..." 
+              placeholderTextColor="#94a3b8"
+              value={searchQuery} 
+              onChangeText={setSearchQuery} 
+              style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }} 
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={20} color="#94a3b8" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <TouchableOpacity 
+            style={{ marginLeft: 10, backgroundColor: '#007AFF', width: 48, height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }} 
+            onPress={() => setModalSortVisible(true)}
+          >
+            <Ionicons name="filter" size={22} color="#fff" />
+          </TouchableOpacity>
+          
+        </Animated.View>
+
         <View style={{ flex: 1 }}>
           {loadingProducts ? (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -527,61 +556,49 @@ const EmptyScreen = () => {
           ) : products.length === 0 ? (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
               <Ionicons name="storefront-outline" size={64} color="#007AFF" />
-              <Text style={{ marginTop: 20, fontSize: 18, color: '#333', textAlign: 'center', fontWeight: 'bold' }}>
-                Seu estoque está pronto!
-              </Text>
-              <Text style={{ marginTop: 10, fontSize: 16, color: '#666', textAlign: 'center' }}>
-                Adicione produtos para visualizá-los aqui.
-              </Text>
+              <Text style={{ marginTop: 20, fontSize: 18, color: '#333', textAlign: 'center', fontWeight: 'bold' }}>Seu estoque está pronto!</Text>
+              <Text style={{ marginTop: 10, fontSize: 16, color: '#666', textAlign: 'center' }}>Adicione produtos para visualizá-los aqui.</Text>
+            </View>
+          ) : processedProducts.length === 0 ? (
+            // Mensagem caso a pesquisa não encontre nada
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+              <Ionicons name="search-outline" size={48} color="#ccc" />
+              <Text style={{ marginTop: 10, fontSize: 16, color: '#999', textAlign: 'center' }}>Nenhum produto encontrado para "{searchQuery}".</Text>
             </View>
           ) : (
-            <FlatList
-              data={products}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={{ padding: 15 }}
+            <Animated.FlatList
+              data={processedProducts}
+              keyExtractor={(item) => item.id.toString()}
+              scrollEventThrottle={16} 
+              onScroll={Animated.event(
+                [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                { useNativeDriver: true }
+              )}
+              contentContainerStyle={{ 
+                paddingTop: SEARCH_BAR_HEIGHT + 15, 
+                paddingHorizontal: 15, 
+                paddingBottom: 15 
+              }}
               renderItem={({ item }) => (
                 <TouchableOpacity 
                   activeOpacity={0.7} 
                   onPress={() => abrirModalEdicao(item)} 
                   style={{ backgroundColor: '#fff', padding: 15, borderRadius: 8, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 }}
                 >
-                  {/* Lado Esquerdo: Info do Produto */}
                   <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.nome}</Text>
                     {item.sku_barcode && !item.sku_barcode.startsWith('INT-') ? <Text style={{ fontSize: 12, color: '#888' }}>SKU: {item.sku_barcode}</Text> : null}
-                    <Text style={{ fontSize: 14, color: '#007AFF', marginTop: 5, fontWeight: '500' }}>
-                      R$ {Number(item.preco_venda).toFixed(2).replace('.', ',')}
-                    </Text>
+                    <Text style={{ fontSize: 14, color: '#007AFF', marginTop: 5, fontWeight: '500' }}>R$ {Number(item.preco_venda).toFixed(2).replace('.', ',')}</Text>
                   </View>
 
-                  {/* Lado Direito: Controles Rápidos de Estoque */}
                   <View style={{ alignItems: 'center' }}>
                     <Text style={{ fontSize: 12, color: '#666', marginBottom: 5 }}>Estoque</Text>
-                    
-                    {/* Cápsula dos botões */}
                     <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 8, padding: 4 }}>
-                      <TouchableOpacity 
-                        onPress={() => handleAjusteEstoque(item, -1)}
-                        style={{ width: 32, height: 32, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}
-                      >
+                      <TouchableOpacity onPress={() => handleAjusteEstoque(item, -1)} style={{ width: 32, height: 32, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}>
                         <Ionicons name="remove" size={20} color="#d9534f" />
                       </TouchableOpacity>
-
-                      <Text style={{ 
-                        fontSize: 18, 
-                        fontWeight: 'bold', 
-                        // Continua ficando vermelho se atingir o mínimo!
-                        color: item.estoque_atual <= item.estoque_minimo ? '#d9534f' : '#4CAF50',
-                        width: 45,
-                        textAlign: 'center'
-                      }}>
-                        {item.estoque_atual}
-                      </Text>
-
-                      <TouchableOpacity 
-                        onPress={() => handleAjusteEstoque(item, 1)}
-                        style={{ width: 32, height: 32, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}
-                      >
+                      <Text style={{ fontSize: 18, fontWeight: 'bold', color: item.estoque_atual <= item.estoque_minimo ? '#d9534f' : '#4CAF50', width: 45, textAlign: 'center' }}>{item.estoque_atual}</Text>
+                      <TouchableOpacity onPress={() => handleAjusteEstoque(item, 1)} style={{ width: 32, height: 32, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}>
                         <Ionicons name="add" size={20} color="#007AFF" />
                       </TouchableOpacity>
                     </View>
@@ -592,45 +609,64 @@ const EmptyScreen = () => {
           )}
         </View>
 
-        <View style={{ height: 70, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#e0e0e0', justifyContent: 'center', alignItems: 'center', flexDirection: 'row' }}>
+        {/* MODAL DE ORDENAÇÃO */}
+        <Modal visible={modalSortVisible} transparent={true} animationType="fade">
           <TouchableOpacity 
-            style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center', marginTop: -40, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 }}
-            onPress={abrirModalNovo} // <--- TROQUE PARA abrirModalNovo
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+            activeOpacity={1}
+            onPress={() => setModalSortVisible(false)} // Fecha se clicar fora
           >
+            <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '85%', overflow: 'hidden' }}>
+              <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="funnel-outline" size={22} color="#333" style={{ marginRight: 10 }} />
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>Ordenar por</Text>
+              </View>
+              
+              <View style={{ paddingBottom: 10 }}>
+                {sortOptionsList.map((option) => (
+                  <TouchableOpacity
+                    key={option.id}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingVertical: 15,
+                      paddingHorizontal: 20,
+                      borderBottomWidth: 1,
+                      borderColor: '#f0f0f0',
+                      backgroundColor: sortOption === option.id ? '#e6f2ff' : '#fff'
+                    }}
+                    onPress={() => {
+                      setSortOption(option.id);
+                      setModalSortVisible(false);
+                    }}
+                  >
+                    <Text style={{ fontSize: 15, color: sortOption === option.id ? '#007AFF' : '#555', fontWeight: sortOption === option.id ? 'bold' : '500' }}>
+                      {option.label}
+                    </Text>
+                    {sortOption === option.id && <Ionicons name="checkmark" size={20} color="#007AFF" />}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* (MANTEVE O BOTÃO DE ADICIONAR E OS OUTROS MODAIS IGUAIS...) */}
+        <View style={{ height: 70, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#e0e0e0', justifyContent: 'center', alignItems: 'center', flexDirection: 'row' }}>
+          <TouchableOpacity style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center', marginTop: -40, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 }} onPress={abrirModalNovo}>
             <Ionicons name="add" size={32} color="#fff" />
           </TouchableOpacity>
         </View>
 
-        {/* MODAL DE CADASTRAR PRODUTO */}
-        {/* Trocamos para "none" para assumirmos o controle total da animação */}
         <Modal visible={modalVisible} transparent={true} animationType="none">
           <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-            
-            {/* 1. CAMADA DO FUNDO ESCURO (Totalmente independente da caixa) */}
             <TouchableWithoutFeedback onPress={fecharModal}>
-              <Animated.View style={{ 
-                position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, 
-                backgroundColor: '#000', 
-                opacity: fadeAnim // <--- Animando de 0 a 0.5 junto com o slide
-              }} />
+              <Animated.View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: '#000', opacity: fadeAnim }} />
             </TouchableWithoutFeedback>
-
-            {/* 2. CAMADA DA CAIXA BRANCA */}
-            <Animated.View style={{ 
-              width: '100%',
-              backgroundColor: '#fff', 
-              padding: 20, 
-              borderTopLeftRadius: 20, 
-              borderTopRightRadius: 20, 
-              maxHeight: '85%',
-              transform: [{ translateY: slideAnim }] // <--- Deslizando
-            }}>
+            <Animated.View style={{ width: '100%', backgroundColor: '#fff', padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', transform: [{ translateY: slideAnim }] }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-                <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>
-                  {produtoEditando ? "Editar Produto" : "Novo Produto"}
-                </Text>
-                
-                {/* A lixeira só aparece se existir um produto sendo editado */}
+                <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>{produtoEditando ? "Editar Produto" : "Novo Produto"}</Text>
                 {produtoEditando && (
                   <TouchableOpacity onPress={handleApagarProduto} style={{ padding: 5 }}>
                     <Ionicons name="trash-outline" size={24} color="#d9534f" />
@@ -648,66 +684,39 @@ const EmptyScreen = () => {
                   <TextInput placeholder="Estoque Inicial *" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                   <TextInput placeholder="Estoque Mín." value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                 </View>
-                {/* BOTÕES PADRONIZADOS: PRODUTO */}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, paddingBottom: 20 }}>
-                  <TouchableOpacity 
-                    onPress={fecharModal} 
-                    style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} 
-                    disabled={loading}
-                  >
+                  <TouchableOpacity onPress={fecharModal} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} disabled={loading}>
                     <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
                   </TouchableOpacity>
-                  
-                  <TouchableOpacity 
-                    onPress={handleSalvarProduto} 
-                    disabled={loading} 
-                    style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}
-                  >
-                    <Text style={{ color: '#fff', fontWeight: 'bold' }}>
-                      {loading ? "Salvando..." : (produtoEditando ? "Atualizar" : "Salvar")}
-                    </Text>
+                  <TouchableOpacity onPress={handleSalvarProduto} disabled={loading} style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}>
+                    <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Salvando..." : (produtoEditando ? "Atualizar" : "Salvar")}</Text>
                   </TouchableOpacity>
                 </View>
               </ScrollView>
             </Animated.View>
-
           </View>
         </Modal>
 
-        {/* MODAL DE CONFIRMAR EXCLUSÃO DO PRODUTO (Estilo Premium) */}
         <Modal visible={modalApagarProdutoVisible} transparent={true} animationType="fade">
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
             <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '85%', overflow: 'hidden' }}>
-              
               <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                 <Ionicons name="warning" size={22} color="#d9534f" style={{ marginRight: 10 }} />
                 <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>Apagar Produto?</Text>
               </View>
-              
               <View style={{ padding: 20 }}>
                 <Text style={{ fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 20, lineHeight: 22 }}>
                   Tem certeza que deseja apagar <Text style={{ fontWeight: 'bold', color: '#333' }}>{produtoEditando?.nome}</Text>? 
                 </Text>
-
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <TouchableOpacity 
-                    onPress={() => setModalApagarProdutoVisible(false)} 
-                    style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} 
-                    disabled={loading}
-                  >
+                  <TouchableOpacity onPress={() => setModalApagarProdutoVisible(false)} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} disabled={loading}>
                     <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
                   </TouchableOpacity>
-                  
-                  <TouchableOpacity 
-                    onPress={confirmarApagarProduto} 
-                    disabled={loading} 
-                    style={{ flex: 1, backgroundColor: '#d9534f', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}
-                  >
+                  <TouchableOpacity onPress={confirmarApagarProduto} disabled={loading} style={{ flex: 1, backgroundColor: '#d9534f', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}>
                     <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Apagando..." : "Sim, apagar"}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
-
             </View>
           </View>
         </Modal>
@@ -719,12 +728,8 @@ const EmptyScreen = () => {
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20, backgroundColor: '#f5f5f5' }}>
       <Ionicons name="folder-open-outline" size={64} color="#ccc" />
-      <Text style={{ marginTop: 20, fontSize: 18, color: '#666', textAlign: 'center', fontWeight: 'bold' }}>
-        Nenhum estoque selecionado.
-      </Text>
-      <Text style={{ marginTop: 10, fontSize: 14, color: '#999', textAlign: 'center' }}>
-        Abra o menu lateral para criar um novo estoque ou acessar um existente.
-      </Text>
+      <Text style={{ marginTop: 20, fontSize: 18, color: '#666', textAlign: 'center', fontWeight: 'bold' }}>Nenhum estoque selecionado.</Text>
+      <Text style={{ marginTop: 10, fontSize: 14, color: '#999', textAlign: 'center' }}>Abra o menu lateral para criar um novo estoque ou acessar um existente.</Text>
     </View>
   );
 };
@@ -741,6 +746,7 @@ const CustomDrawerContent = (props) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [nomeEstoque, setNomeEstoque] = useState('');
   const [loading, setLoading] = useState(false);
+  
 
   // NOVO: Estados para o Menu Flutuante (Opções) e Renomear
   const [estoqueOpcoes, setEstoqueOpcoes] = useState(null); // Guarda qual estoque foi clicado
