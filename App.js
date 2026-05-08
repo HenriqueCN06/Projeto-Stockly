@@ -426,6 +426,12 @@ const EmptyScreen = () => {
 
   useEffect(() => {
     if (lojaAtiva) {
+      
+      // --- NOVO: RESETA A TELA AO TROCAR DE ESTOQUE ---
+      scrollY.setValue(0); // Faz a barra de pesquisa descer novamente
+      setSearchQuery('');  // Limpa o texto pesquisado do estoque anterior
+      // ------------------------------------------------
+      
       const carregarProdutos = async () => {
         setLoadingProducts(true);
         const { data, error } = await supabase
