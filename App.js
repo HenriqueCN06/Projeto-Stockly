@@ -2,7 +2,8 @@
 import 'react-native-gesture-handler'; 
 
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, Alert, Platform, Modal, ActivityIndicator, ScrollView, TouchableWithoutFeedback, Animated, Dimensions } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, Alert, Platform, Modal, ActivityIndicator, ScrollView, TouchableWithoutFeedback, Animated, Dimensions, KeyboardAvoidingView } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createDrawerNavigator, DrawerContentScrollView, DrawerItemList } from '@react-navigation/drawer';
@@ -338,6 +339,35 @@ const EmptyScreen = () => {
   const [estoqueAtual, setEstoqueAtual] = useState('');
   const [estoqueMinimo, setEstoqueMinimo] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
+
+  const showBanner = (message, type) => {
+    setNotification({ visible: true, message, type });
+    setTimeout(() => {
+      setNotification({ visible: false, message: '', type: 'success' });
+    }, 3000); // Some sozinho após 3 segundos
+  };
+
+  const openScanner = async () => {
+    if (!permission?.granted) {
+      const { granted } = await requestPermission();
+      if (!granted) {
+        Alert.alert("Permissão negada", "Precisamos de acesso à câmera para ler os códigos de barras.");
+        return;
+      }
+    }
+    setIsScanning(true);
+  };
+
+  const handleBarcodeScanned = ({ type, data }) => {
+    setIsScanning(false);
+    setSku(data); 
+    
+    // Trocamos o Alert.alert por isto:
+    showBanner(`Código lido: ${data}`, "success"); 
+  };
 
   const slideAnim = useRef(new Animated.Value(Dimensions.get('window').height)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -517,14 +547,33 @@ const EmptyScreen = () => {
 
   if (lojaAtiva) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#f5f5f5', overflow: 'hidden' }}>
+      <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
+        
+        {/* --- NOVO: NOTIFICAÇÃO VISUAL DO BANNER --- */}
+        {notification.visible && (
+          <View style={[
+            styles.topNotification, 
+            { 
+              backgroundColor: notification.type === 'error' ? 'rgba(244, 67, 54, 0.9)' : 'rgba(76, 175, 80, 0.9)', 
+              zIndex: 999, // Garante que fique na frente de tudo
+              top: 20 // Afasta um pouco do cabeçalho
+            }
+          ]}>
+            <Text style={[
+              styles.topNotificationText,
+              { color: notification.type === 'error' ? '#fff' : '#fff' }
+            ]}>
+              {notification.message}
+            </Text>
+          </View>
+        )}
         
         {/* --- NOVA BARRA DE PESQUISA E BOTÃO DE FILTRO --- */}
         <Animated.View style={{ 
           position: 'absolute', 
           top: 0, left: 0, right: 0, 
-          zIndex: 10,       // <-- Garante que fique na frente na Web/iOS
-          elevation: 10,    // <-- Garante que vença a sombra dos produtos no Android
+          zIndex: 3,       // <-- Diminuído para 3
+          elevation: 3,    // <-- Diminuído para 3
           backgroundColor: 'transparent', 
           transform: [{ translateY: searchBarTranslateY }],
           flexDirection: 'row', alignItems: 'center', 
@@ -670,7 +719,10 @@ const EmptyScreen = () => {
         </View>
 
         <Modal visible={modalVisible} transparent={true} animationType="none">
-          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+            style={{ flex: 1, justifyContent: 'flex-end' }}
+          >
             <TouchableWithoutFeedback onPress={fecharModal}>
               <Animated.View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: '#000', opacity: fadeAnim }} />
             </TouchableWithoutFeedback>
@@ -687,7 +739,7 @@ const EmptyScreen = () => {
                   
                   {/* Ícone de Código de Barras (Aparece tanto na criação quanto na edição) */}
                   <TouchableOpacity 
-                    onPress={() => Alert.alert("Scanner", "Em breve a câmera abrirá aqui!")} 
+                    onPress={openScanner} 
                     style={{ padding: 5, marginRight: produtoEditando ? 15 : 0 }}
                   >
                     <Ionicons name="barcode-outline" size={28} color="#007AFF" />
@@ -724,7 +776,7 @@ const EmptyScreen = () => {
                 </View>
               </ScrollView>
             </Animated.View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <Modal visible={modalApagarProdutoVisible} transparent={true} animationType="fade">
@@ -748,6 +800,40 @@ const EmptyScreen = () => {
                 </View>
               </View>
             </View>
+          </View>
+        </Modal>
+        {/* --- MODAL DA CÂMERA EM TELA CHEIA --- */}
+        <Modal visible={isScanning} animationType="slide" transparent={false}>
+          <View style={{ flex: 1, backgroundColor: '#000' }}>
+            
+            {/* Cabeçalho do Scanner */}
+            <View style={{ paddingTop: Platform.OS === 'android' ? 40 : 50, paddingBottom: 20, paddingHorizontal: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#000' }}>
+              <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>Escaneie o Código</Text>
+              <TouchableOpacity onPress={() => setIsScanning(false)} style={{ padding: 5 }}>
+                <Ionicons name="close" size={32} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            
+            {/* Visor da Câmera */}
+            <View style={{ flex: 1 }}>
+              <CameraView
+                style={{ flex: 1 }}
+                facing="back"
+                onBarcodeScanned={isScanning ? handleBarcodeScanned : undefined}
+                barcodeScannerSettings={{
+                  barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "qr"],
+                }}
+              />
+              
+              {/* Mira visual para orientar o usuário */}
+              <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' }}>
+                <View style={{ width: 250, height: 150, borderWidth: 3, borderColor: '#007AFF', borderRadius: 10, backgroundColor: 'transparent' }} />
+                <Text style={{ color: '#fff', marginTop: 30, backgroundColor: 'rgba(0,0,0,0.7)', padding: 10, borderRadius: 8, fontSize: 16 }}>
+                  Alinhe o código na marcação acima
+                </Text>
+              </View>
+            </View>
+
           </View>
         </Modal>
 
@@ -1263,6 +1349,7 @@ const MainAppDrawer = () => {
     <Drawer.Navigator 
       drawerContent={(props) => <CustomDrawerContent {...props} />}
       screenOptions={{
+        headerStyle: { elevation: 15, zIndex: 15 }, // <-- NOVO: Força o cabeçalho a ficar no topo de tudo!
         headerTintColor: '#333',
         drawerActiveTintColor: '#007AFF',
         headerTitleAlign: 'left', // NOVO: Garante que o título fique colado no menu lateral (três traços)
