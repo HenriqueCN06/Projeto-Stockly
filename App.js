@@ -2,7 +2,7 @@
 import 'react-native-gesture-handler'; 
 
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, Alert, Platform, Modal, ActivityIndicator, ScrollView, TouchableWithoutFeedback, Animated, Dimensions, KeyboardAvoidingView } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, Alert, Platform, Modal, ActivityIndicator, ScrollView, TouchableWithoutFeedback, Animated, Dimensions, Keyboard } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -342,6 +342,36 @@ const EmptyScreen = () => {
   const [isScanning, setIsScanning] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
+  const keyboardOffset = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        Animated.timing(keyboardOffset, {
+          toValue: -100, 
+          duration: 250, 
+          useNativeDriver: true,
+        }).start();
+      }
+    );
+    
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        Animated.timing(keyboardOffset, {
+          toValue: 0, 
+          duration: 250,
+          useNativeDriver: true,
+        }).start();
+      }
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const showBanner = (message, type) => {
     setNotification({ visible: true, message, type });
@@ -549,101 +579,93 @@ const EmptyScreen = () => {
     return (
       <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
         
-        {/* --- NOVO: NOTIFICAÇÃO VISUAL DO BANNER --- */}
+        
+{/* --- NOVO: NOTIFICAÇÃO VISUAL DO BANNER --- */}
         {notification.visible && (
           <View style={[
             styles.topNotification, 
             { 
               backgroundColor: notification.type === 'error' ? 'rgba(244, 67, 54, 0.9)' : 'rgba(76, 175, 80, 0.9)', 
-              zIndex: 999, // Garante que fique na frente de tudo
-              top: 20 // Afasta um pouco do cabeçalho
+              zIndex: 999, 
+              top: 20 
             }
           ]}>
             <Text style={[
               styles.topNotificationText,
-              { color: notification.type === 'error' ? '#fff' : '#fff' }
+              { color: '#fff' }
             ]}>
               {notification.message}
             </Text>
           </View>
         )}
-        
-        {/* --- NOVA BARRA DE PESQUISA E BOTÃO DE FILTRO --- */}
-        <Animated.View style={{ 
-          position: 'absolute', 
-          top: 0, left: 0, right: 0, 
-          zIndex: 3,       // <-- Diminuído para 3
-          elevation: 3,    // <-- Diminuído para 3
-          backgroundColor: 'transparent', 
-          transform: [{ translateY: searchBarTranslateY }],
-          flexDirection: 'row', alignItems: 'center', 
-          paddingHorizontal: 15, 
-          paddingTop: 16,       // <-- 16px em cima
-          paddingBottom: 16     // <-- 16px embaixo para centralizar perfeitamente
-        }}>
-          
-          <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
-            <Ionicons name="search" size={20} color="#64748b" />
-            <TextInput 
-              placeholder="Pesquisar produto ou SKU..." 
-              placeholderTextColor="#94a3b8"
-              value={searchQuery} 
-              onChangeText={setSearchQuery} 
-              style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }} 
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')}>
-                <Ionicons name="close-circle" size={20} color="#94a3b8" />
-              </TouchableOpacity>
-            )}
-          </View>
+        {/* ------------------------------------------ */}
 
-          <TouchableOpacity 
-            style={{ marginLeft: 10, backgroundColor: '#007AFF', width: 48, height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }} 
-            onPress={() => setModalSortVisible(true)}
-          >
-            <Ionicons name="filter" size={22} color="#fff" />
-          </TouchableOpacity>
-          
-        </Animated.View>
+        {/* --- BARRA DE PESQUISA FIXA NO TOPO --- */}
+        <View style={{ 
+          position: 'absolute', // <-- Faz a barra flutuar sobre a tela
+          top: 0, left: 0, right: 0, 
+          paddingHorizontal: 15, 
+          paddingTop: 15, 
+          paddingBottom: 10, 
+          backgroundColor: 'transparent', // <-- Fundo invisível
+          zIndex: 10 
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
+              <Ionicons name="search" size={20} color="#64748b" />
+              <TextInput 
+                placeholder="Pesquisar produto ou SKU..." 
+                placeholderTextColor="#94a3b8"
+                value={searchQuery} 
+                onChangeText={setSearchQuery} 
+                style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }} 
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <Ionicons name="close-circle" size={20} color="#94a3b8" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <TouchableOpacity 
+              style={{ marginLeft: 10, backgroundColor: '#007AFF', width: 48, height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }} 
+              onPress={() => setModalSortVisible(true)}
+            >
+              <Ionicons name="filter" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+        {/* -------------------------------------- */}
 
         <View style={{ flex: 1 }}>
           {loadingProducts ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-              <ActivityIndicator size="large" color="#007AFF" />
-            </View>
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator size="large" color="#007AFF" /></View>
           ) : products.length === 0 ? (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
               <Ionicons name="storefront-outline" size={64} color="#007AFF" />
               <Text style={{ marginTop: 20, fontSize: 18, color: '#333', textAlign: 'center', fontWeight: 'bold' }}>Seu estoque está pronto!</Text>
-              <Text style={{ marginTop: 10, fontSize: 16, color: '#666', textAlign: 'center' }}>Adicione produtos para visualizá-los aqui.</Text>
             </View>
           ) : processedProducts.length === 0 ? (
-            // Mensagem caso a pesquisa não encontre nada
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
               <Ionicons name="search-outline" size={48} color="#ccc" />
               <Text style={{ marginTop: 10, fontSize: 16, color: '#999', textAlign: 'center' }}>Nenhum produto encontrado para "{searchQuery}".</Text>
             </View>
           ) : (
-            <Animated.FlatList
+            
+            // AGORA É UMA FLATLIST NORMAL (Sem a barra dentro dela)
+            <FlatList
               data={processedProducts}
               keyExtractor={(item) => item.id.toString()}
-              scrollEventThrottle={16} 
-              onScroll={Animated.event(
-                [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-                { useNativeDriver: true }
-              )}
-              contentContainerStyle={{ 
-                paddingTop: SEARCH_BAR_HEIGHT + 16, 
-                paddingHorizontal: 15, 
-                paddingBottom: 15 
-              }}
+              // O paddingTop foi aumentado para 85 para o primeiro item não ficar escondido
+              contentContainerStyle={{ paddingHorizontal: 15, paddingBottom: 15, paddingTop: 75 }}
+              
               renderItem={({ item }) => (
                 <TouchableOpacity 
                   activeOpacity={0.7} 
                   onPress={() => abrirModalEdicao(item)} 
                   style={{ backgroundColor: '#fff', padding: 15, borderRadius: 8, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 }}
                 >
+                  {/* ... conteúdo do produto ... */}
                   <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.nome}</Text>
                     {item.sku_barcode && !item.sku_barcode.startsWith('INT-') ? <Text style={{ fontSize: 12, color: '#888' }}>SKU: {item.sku_barcode}</Text> : null}
@@ -718,65 +740,89 @@ const EmptyScreen = () => {
           </TouchableOpacity>
         </View>
 
-        <Modal visible={modalVisible} transparent={true} animationType="none">
-          <KeyboardAvoidingView 
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-            style={{ flex: 1, justifyContent: 'flex-end' }}
+        {/* MODAL FLUTUANTE: NOVO / EDITAR PRODUTO */}
+        <Modal visible={modalVisible} transparent={true} animationType="none"> 
+
+          {/* 1. FUNDO ESCURO (Isolado e Estático) */}
+          <View style={[StyleSheet.absoluteFillObject, { zIndex: 1 }]}>
+            <Animated.View style={{ flex: 1, backgroundColor: '#000', opacity: fadeAnim }} />
+          </View>
+
+          {/* 2. ÁREA CLICÁVEL INVISÍVEL (Fecha o modal ao clicar fora) */}
+          <TouchableOpacity 
+            activeOpacity={1} 
+            onPress={fecharModal} 
+            style={{ flex: 1, justifyContent: 'center', alignItems: 'center', zIndex: 2 }}
           >
-            <TouchableWithoutFeedback onPress={fecharModal}>
-              <Animated.View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: '#000', opacity: fadeAnim }} />
-            </TouchableWithoutFeedback>
-            <Animated.View style={{ width: '100%', backgroundColor: '#fff', padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', transform: [{ translateY: slideAnim }] }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+            
+            {/* 3. ESCUDO DA JANELA (Impede que o clique na janela feche o modal e abaixa o teclado) */}
+            <TouchableWithoutFeedback onPress={() => Keyboard.dismiss()}>
+              <Animated.View style={{ 
+                width: '90%', 
+                backgroundColor: '#fff',
+                borderRadius: 15, 
+                padding: 20, 
+                maxHeight: Dimensions.get('window').height * 0.85, 
+                elevation: 10,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 5 },
+                shadowOpacity: 0.3,
+                shadowRadius: 10,
+                transform: [
+                  { translateY: slideAnim },
+                  { translateY: keyboardOffset } 
+                ]
+              }}>
                 
-                {/* TÍTULO À ESQUERDA */}
-                <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>
-                  {produtoEditando ? "Editar Produto" : "Novo Produto"}
-                </Text>
-                
-                {/* ÍCONES À DIREITA */}
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                  <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>
+                    {produtoEditando ? "Editar Produto" : "Novo Produto"}
+                  </Text>
                   
-                  {/* Ícone de Código de Barras (Aparece tanto na criação quanto na edição) */}
-                  <TouchableOpacity 
-                    onPress={openScanner} 
-                    style={{ padding: 5, marginRight: produtoEditando ? 15 : 0 }}
-                  >
-                    <Ionicons name="barcode-outline" size={28} color="#007AFF" />
-                  </TouchableOpacity>
-
-                  {/* Ícone de Lixeira (Só aparece se estiver editando) */}
-                  {produtoEditando && (
-                    <TouchableOpacity onPress={handleApagarProduto} style={{ padding: 5 }}>
-                      <Ionicons name="trash-outline" size={24} color="#d9534f" />
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity onPress={openScanner} style={{ padding: 5, marginRight: produtoEditando ? 15 : 0 }}>
+                      <Ionicons name="barcode-outline" size={28} color="#007AFF" />
                     </TouchableOpacity>
-                  )}
-                  
+
+                    {produtoEditando && (
+                      <TouchableOpacity onPress={handleApagarProduto} style={{ padding: 5 }}>
+                        <Ionicons name="trash-outline" size={24} color="#d9534f" />
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity onPress={fecharModal} style={{ marginLeft: 15 }}>
+                      <Ionicons name="close" size={28} color="#999" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
-              </View>
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <TextInput placeholder="Nome do Produto *" placeholderTextColor="#999" value={nome} onChangeText={setNome} style={styles.input} />
-                <TextInput placeholder="Código de Barras / SKU (Opcional)" placeholderTextColor="#999" value={sku} onChangeText={setSku} style={styles.input} keyboardType="numeric" />
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <TextInput placeholder="Custo (R$) *" placeholderTextColor="#999" value={precoCusto} onChangeText={setPrecoCusto} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
-                  <TextInput placeholder="Venda (R$) *" placeholderTextColor="#999" value={precoVenda} onChangeText={setPrecoVenda} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <TextInput placeholder="Estoque Inicial *" placeholderTextColor="#999" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
-                  <TextInput placeholder="Estoque Mín." placeholderTextColor="#999" value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, paddingBottom: 20 }}>
-                  <TouchableOpacity onPress={fecharModal} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} disabled={loading}>
-                    <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={handleSalvarProduto} disabled={loading} style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}>
-                    <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Salvando..." : (produtoEditando ? "Atualizar" : "Salvar")}</Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            </Animated.View>
-          </KeyboardAvoidingView>
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  <TextInput placeholder="Nome do Produto *" placeholderTextColor="#999" value={nome} onChangeText={setNome} style={styles.input} />
+                  <TextInput placeholder="Código de Barras / SKU" placeholderTextColor="#999" value={sku} onChangeText={setSku} style={styles.input} keyboardType="numeric" />
+                  
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <TextInput placeholder="Custo (R$)" placeholderTextColor="#999" value={precoCusto} onChangeText={setPrecoCusto} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                    <TextInput placeholder="Venda (R$)" placeholderTextColor="#999" value={precoVenda} onChangeText={setPrecoVenda} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                  </View>
+                  
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <TextInput placeholder="Estoque Atual" placeholderTextColor="#999" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                    <TextInput placeholder="Estoque Mín." placeholderTextColor="#999" value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                  </View>
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 15 }}>
+                    <TouchableOpacity onPress={fecharModal} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }}>
+                      <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={handleSalvarProduto} style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}>
+                      <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Salvando..." : "Salvar"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
+
+              </Animated.View>
+            </TouchableWithoutFeedback>
+
+          </TouchableOpacity>
         </Modal>
 
         <Modal visible={modalApagarProdutoVisible} transparent={true} animationType="fade">
@@ -1349,7 +1395,6 @@ const MainAppDrawer = () => {
     <Drawer.Navigator 
       drawerContent={(props) => <CustomDrawerContent {...props} />}
       screenOptions={{
-        headerStyle: { elevation: 15, zIndex: 15 }, // <-- NOVO: Força o cabeçalho a ficar no topo de tudo!
         headerTintColor: '#333',
         drawerActiveTintColor: '#007AFF',
         headerTitleAlign: 'left', // NOVO: Garante que o título fique colado no menu lateral (três traços)
