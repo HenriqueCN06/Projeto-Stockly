@@ -355,20 +355,28 @@ const EmptyScreen = ({ navigation }) => {
   const [editingStockId, setEditingStockId] = useState(null);
   const [tempStockValue, setTempStockValue] = useState('');
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [meuId, setMeuId] = useState(null);
 
   // NOVO: Vigia quantas notificações não lidas existem
   useEffect(() => {
     if (lojaAtiva) {
-      const fetchUnread = async () => {
-        const { count } = await supabase
-          .from('notificacoes')
-          .select('*', { count: 'exact', head: true })
-          .eq('loja_id', lojaAtiva.id)
-          .eq('lida', false);
+      const inicializar = async () => {
+        // Busca o ID do usuário logado uma única vez ao abrir a loja
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) setMeuId(user.id);
         
-        setUnreadNotifCount(count || 0);
+        setLoadingProducts(true);
+        const { data, error } = await supabase
+          .from('produtos')
+          .select('*')
+          .eq('loja_id', lojaAtiva.id)
+          .eq('ativo', true)
+          .order('nome', { ascending: true });
+
+        if (data) setProducts(data);
+        setLoadingProducts(false);
       };
-      fetchUnread();
+      inicializar();
     }
   }, [lojaAtiva]);
 
@@ -572,6 +580,7 @@ const EmptyScreen = ({ navigation }) => {
           // 1. Registra a movimentação
           await supabase.from('movimentacoes').insert([{
             produto_id: produtoEditando.id,
+            usuario_id: meuId,
             tipo: diferenca > 0 ? 'ENTRADA' : 'SAIDA',
             quantidade: Math.abs(diferenca),
             observacao: 'Edição manual (Janela)'
@@ -648,6 +657,7 @@ const EmptyScreen = ({ navigation }) => {
             if (atualNum > 0) {
               await supabase.from('movimentacoes').insert([{
                 produto_id: ressuscitado.id,
+                usuario_id: meuId,
                 tipo: 'ENTRADA',
                 quantidade: atualNum,
                 observacao: 'Produto reativado'
@@ -665,6 +675,7 @@ const EmptyScreen = ({ navigation }) => {
           if (atualNum > 0) {
             await supabase.from('movimentacoes').insert([{
               produto_id: data.id,
+              usuario_id: meuId,
               tipo: 'ENTRADA',
               quantidade: atualNum,
               observacao: 'Estoque inicial (Novo Produto)'
@@ -690,6 +701,7 @@ const EmptyScreen = ({ navigation }) => {
       if (produtoEditando.estoque_atual > 0) {
         await supabase.from('movimentacoes').insert([{
           produto_id: produtoEditando.id,
+          usuario_id: meuId,
           tipo: 'SAIDA',
           quantidade: produtoEditando.estoque_atual, // Zera tudo que sobrou
           observacao: 'Produto inativado / excluído'
@@ -735,6 +747,7 @@ const EmptyScreen = ({ navigation }) => {
       // 2. Salva o log na tabela 'movimentacoes'
       const { error: errorMov } = await supabase.from('movimentacoes').insert([{
         produto_id: produto.id,
+        usuario_id: meuId,
         tipo: mudanca > 0 ? 'ENTRADA' : 'SAIDA',
         quantidade: Math.abs(mudanca), 
         observacao: 'Ajuste manual'
@@ -803,6 +816,7 @@ const EmptyScreen = ({ navigation }) => {
       // 2. Salva o log na tabela movimentacoes
       await supabase.from('movimentacoes').insert([{
         produto_id: produto.id,
+        usuario_id: meuId,
         tipo: diferenca > 0 ? 'ENTRADA' : 'SAIDA',
         quantidade: Math.abs(diferenca),
         observacao: 'Ajuste manual (Lista)'
@@ -2416,18 +2430,28 @@ const MovimentacoesScreen = ({ navigation }) => {
 
   useEffect(() => {
     const carregarHistorico = async () => {
-      // Fazemos um Inner Join para puxar apenas movimentações de produtos da loja ativa, trazendo também o nome do produto
+      setLoading(true); // Garante que o loading comece
+      
       const { data, error } = await supabase
         .from('movimentacoes')
         .select(`
           id, tipo, quantidade, observacao, criado_em,
-          produtos!inner(nome, loja_id)
-        `)
+          produtos!inner(nome, loja_id),
+          perfis(nome) 
+        `) // Mudamos para a sintaxe padrão de relação
         .eq('produtos.loja_id', lojaAtiva.id)
         .order('criado_em', { ascending: false })
-        .limit(100); // <-- BASTA ADICIONAR ESTE LIMITE AQUI!
+        .limit(100);
 
-      if (data) setMovimentacoes(data);
+      if (error) {
+        // SE DER ERRO, ISSO VAI APARECER NO SEU TERMINAL:
+        console.error("ERRO NO HISTÓRICO:", error.message);
+        Alert.alert("Erro ao carregar", "O banco recusou a busca. Verifique se as tabelas estão ligadas.");
+      }
+
+      if (data) {
+        setMovimentacoes(data);
+      }
       setLoading(false);
     };
     carregarHistorico();
@@ -2477,6 +2501,9 @@ const MovimentacoesScreen = ({ navigation }) => {
                   <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.produtos.nome}</Text>
                   <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{dataFormatada} às {horaFormatada}</Text>
                   <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>Motivo: {item.observacao}</Text>
+                  <Text style={{ fontSize: 12, color: '#007AFF', fontWeight: 'bold', marginTop: 2 }}>
+                    Por: {item.perfis?.[0]?.nome || item.perfis?.nome || 'Sistema'}
+                  </Text>
                 </View>
 
                 {/* Quantidade */}
