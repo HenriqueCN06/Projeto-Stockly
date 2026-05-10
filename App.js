@@ -2,7 +2,7 @@
 import 'react-native-gesture-handler'; 
 
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, Alert, Platform, Modal, ActivityIndicator, ScrollView, TouchableWithoutFeedback, Animated, Dimensions, Keyboard } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, Alert, Platform, Modal, ActivityIndicator, ScrollView, TouchableWithoutFeedback, Animated, Dimensions, Keyboard, Switch } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -316,7 +316,7 @@ const SignUpScreen = ({ navigation }) => {
   );
 };
 
-const EmptyScreen = () => {
+const EmptyScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
   const isFetchingLojas = useStore(state => state.isFetchingLojas);
   
@@ -338,6 +338,8 @@ const EmptyScreen = () => {
   const [precoVenda, setPrecoVenda] = useState('');
   const [estoqueAtual, setEstoqueAtual] = useState('');
   const [estoqueMinimo, setEstoqueMinimo] = useState('');
+  const [notificarMinimo, setNotificarMinimo] = useState(false);
+  const [notificarMovimentacao, setNotificarMovimentacao] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
@@ -455,6 +457,7 @@ const EmptyScreen = () => {
   const abrirModalNovo = () => {
     setProdutoEditando(null); 
     setNome(''); setSku(''); setPrecoCusto(''); setPrecoVenda(''); setEstoqueAtual(''); setEstoqueMinimo('');
+    setNotificarMinimo(false); setNotificarMovimentacao(false); // Limpa as chaves
     abrirModal();
   };
 
@@ -466,6 +469,8 @@ const EmptyScreen = () => {
     setPrecoVenda(Number(produto.preco_venda).toFixed(2).replace('.', ','));
     setEstoqueAtual(produto.estoque_atual.toString());
     setEstoqueMinimo(produto.estoque_minimo ? produto.estoque_minimo.toString() : '');
+    setNotificarMinimo(produto.notificar_minimo || false); // Puxa do banco
+    setNotificarMovimentacao(produto.notificar_movimentacao || false); // Puxa do banco
     abrirModal();
   };
 
@@ -498,7 +503,8 @@ const EmptyScreen = () => {
           .from('produtos')
           .select('*')
           .eq('loja_id', lojaAtiva.id)
-          .order('nome', { ascending: true }); // Apenas o fetch base
+          .eq('ativo', true) // <-- NOVO: Só busca os produtos que não foram "apagados"
+          .order('nome', { ascending: true });
 
         if (data) setProducts(data);
         setLoadingProducts(false);
@@ -521,17 +527,90 @@ const EmptyScreen = () => {
       const skuFinal = sku.trim() === '' ? `INT-${Date.now()}` : sku.trim();
 
       if (produtoEditando) {
+        // --- CENÁRIO A: EDIÇÃO DE PRODUTO QUE JÁ ESTÁ NA TELA ---
         const { data, error } = await supabase.from('produtos').update({
-            nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, preco_venda: vendaNum, estoque_atual: atualNum, estoque_minimo: minNum
+            nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, preco_venda: vendaNum, estoque_atual: atualNum, estoque_minimo: minNum, notificar_minimo: notificarMinimo, notificar_movimentacao: notificarMovimentacao
           }).eq('id', produtoEditando.id).select().single();
         if (error) throw error;
+        
+        const diferenca = atualNum - produtoEditando.estoque_atual;
+        if (diferenca !== 0) {
+          await supabase.from('movimentacoes').insert([{
+            produto_id: produtoEditando.id,
+            tipo: diferenca > 0 ? 'ENTRADA' : 'SAIDA',
+            quantidade: Math.abs(diferenca),
+            observacao: 'Edição manual (Janela)'
+          }]);
+        }
         setProducts(products.map(p => p.id === produtoEditando.id ? data : p));
+
       } else {
-        const { data, error } = await supabase.from('produtos').insert([{
-            loja_id: lojaAtiva.id, nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, preco_venda: vendaNum, estoque_atual: atualNum, estoque_minimo: minNum
-          }]).select().single();
-        if (error) throw error;
-        addProduct(data);
+        // --- CENÁRIO B: TENTATIVA DE CRIAR UM NOVO PRODUTO ---
+        
+        // 1. Busca se esse SKU já existe nesta loja (ativo ou inativo)
+        const { data: produtoExistente, error: errorBusca } = await supabase
+          .from('produtos')
+          .select('*')
+          .eq('loja_id', lojaAtiva.id)
+          .eq('sku_barcode', skuFinal)
+          .maybeSingle();
+
+        if (errorBusca) throw errorBusca;
+
+        if (produtoExistente) {
+          if (produtoExistente.ativo) {
+            // Se o produto já está ativo, impede a duplicidade
+            Alert.alert("Atenção", "Este código de barras já pertence a um produto ativo: " + produtoExistente.nome);
+            setLoading(false);
+            return;
+          } else {
+            // RESSURREIÇÃO: O produto existia, foi apagado e agora está voltando
+            const { data: ressuscitado, error: errorRessuscitar } = await supabase
+              .from('produtos')
+              .update({
+                nome: nome,
+                preco_custo: custoNum,
+                preco_venda: vendaNum,
+                estoque_atual: atualNum,
+                estoque_minimo: minNum,
+                ativo: true, // Traz de volta à vida!
+                notificar_minimo: notificarMinimo,
+                notificar_movimentacao: notificarMovimentacao
+              })
+              .eq('id', produtoExistente.id)
+              .select()
+              .single();
+
+            if (errorRessuscitar) throw errorRessuscitar;
+
+            // Registra a volta no histórico
+            if (atualNum > 0) {
+              await supabase.from('movimentacoes').insert([{
+                produto_id: ressuscitado.id,
+                tipo: 'ENTRADA',
+                quantidade: atualNum,
+                observacao: 'Produto reativado'
+              }]);
+            }
+            addProduct(ressuscitado);
+          }
+        } else {
+          // PRODUTO REALMENTE NOVO (Nunca existiu no banco)
+          const { data, error } = await supabase.from('produtos').insert([{
+              loja_id: lojaAtiva.id, nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, preco_venda: vendaNum, estoque_atual: atualNum, estoque_minimo: minNum, ativo: true, notificar_minimo: notificarMinimo, notificar_movimentacao: notificarMovimentacao
+            }]).select().single();
+          if (error) throw error;
+          
+          if (atualNum > 0) {
+            await supabase.from('movimentacoes').insert([{
+              produto_id: data.id,
+              tipo: 'ENTRADA',
+              quantidade: atualNum,
+              observacao: 'Estoque inicial (Novo Produto)'
+            }]);
+          }
+          addProduct(data);
+        }
       }
       fecharModal();
     } catch (error) {
@@ -546,9 +625,27 @@ const EmptyScreen = () => {
   const confirmarApagarProduto = async () => {
     setLoading(true);
     try {
-      const { error } = await supabase.from('produtos').delete().eq('id', produtoEditando.id);
+      // 1. NOVO: Se o produto tinha estoque, registra a SAÍDA no histórico antes de inativar
+      if (produtoEditando.estoque_atual > 0) {
+        await supabase.from('movimentacoes').insert([{
+          produto_id: produtoEditando.id,
+          tipo: 'SAIDA',
+          quantidade: produtoEditando.estoque_atual, // Zera tudo que sobrou
+          observacao: 'Produto inativado / excluído'
+        }]);
+      }
+
+      // 2. A MÁGICA: Em vez de .delete(), fazemos um .update() para inativar e zerar o estoque no banco
+      const { error } = await supabase
+        .from('produtos')
+        .update({ ativo: false, estoque_atual: 0 })
+        .eq('id', produtoEditando.id);
+        
       if (error) throw error;
+
+      // 3. Remove o produto da tela (estado local) para dar a sensação de que foi apagado
       setProducts(products.filter(p => p.id !== produtoEditando.id));
+      
       setModalApagarProdutoVisible(false);
       fecharModal(); 
     } catch (error) {
@@ -561,13 +658,57 @@ const EmptyScreen = () => {
   const handleAjusteEstoque = async (produto, mudanca) => {
     const novoEstoque = produto.estoque_atual + mudanca;
     if (novoEstoque < 0) return; 
+    
+    // Atualiza a tela instantaneamente
     setProducts(products.map(p => p.id === produto.id ? { ...p, estoque_atual: novoEstoque } : p));
+    
     try {
-      const { error } = await supabase.from('produtos').update({ estoque_atual: novoEstoque }).eq('id', produto.id);
-      if (error) throw error;
+      // 1. Atualiza o estoque na tabela 'produtos'
+      const { error: errorProduto } = await supabase.from('produtos').update({ estoque_atual: novoEstoque }).eq('id', produto.id);
+      if (errorProduto) throw errorProduto;
+
+      // 2. Salva o log na tabela 'movimentacoes'
+      const { error: errorMov } = await supabase.from('movimentacoes').insert([{
+        produto_id: produto.id,
+        tipo: mudanca > 0 ? 'ENTRADA' : 'SAIDA',
+        quantidade: Math.abs(mudanca), 
+        observacao: 'Ajuste manual'
+      }]);
+      if (errorMov) throw errorMov;
+
+      // 3. NOVO: MOTOR DE NOTIFICAÇÕES
+      const notificacoes = [];
+
+      // A) Regra da Movimentação (Gera aviso se a chave estiver ligada)
+      if (produto.notificar_movimentacao) {
+        notificacoes.push({
+          loja_id: lojaAtiva.id,
+          produto_id: produto.id,
+          mensagem: `Movimentação: ${mudanca > 0 ? '+' : '-'}${Math.abs(mudanca)} unidade(s) de ${produto.nome}.`,
+          tipo: 'movimentacao'
+        });
+      }
+
+      // B) Regra do Estoque Mínimo (Gera aviso apenas se foi uma SAÍDA e atingiu o limite)
+      if (produto.notificar_minimo && mudanca < 0 && novoEstoque <= produto.estoque_minimo) {
+        notificacoes.push({
+          loja_id: lojaAtiva.id,
+          produto_id: produto.id,
+          mensagem: `Atenção: O estoque de ${produto.nome} chegou a ${novoEstoque} (Mínimo: ${produto.estoque_minimo}).`,
+          tipo: 'alerta_minimo'
+        });
+      }
+
+      // Se alguma regra foi ativada, envia para o banco de dados
+      if (notificacoes.length > 0) {
+        const { error: errorNotif } = await supabase.from('notificacoes').insert(notificacoes);
+        if (errorNotif) console.log("Erro ao gerar notificação:", errorNotif);
+      }
+
     } catch (error) {
+      // Se der erro, desfaz a alteração na tela
       setProducts(products.map(p => p.id === produto.id ? { ...p, estoque_atual: produto.estoque_atual } : p));
-      Alert.alert("Erro", "Não foi possível sincronizar o estoque.");
+      Alert.alert("Erro Supabase", error.message || "Não foi possível sincronizar.");
     }
   };
 
@@ -733,10 +874,21 @@ const EmptyScreen = () => {
           </TouchableOpacity>
         </Modal>
 
-        {/* (MANTEVE O BOTÃO DE ADICIONAR E OS OUTROS MODAIS IGUAIS...) */}
-        <View style={{ height: Platform.OS === 'android' ? 90 : 70, paddingBottom: Platform.OS === 'android' ? 20 : 0, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#e0e0e0', justifyContent: 'center', alignItems: 'center', flexDirection: 'row' }}>
+        {/* BARRA INFERIOR (MENU) */}
+        <View style={{ height: Platform.OS === 'android' ? 90 : 70, paddingBottom: Platform.OS === 'android' ? 20 : 0, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#e0e0e0', flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' }}>
+          
+          {/* Botão Invisível (Para forçar o botão de "+" a ficar exatamente no centro) */}
+          <View style={{ width: 60 }} />
+
+          {/* Botão de Adicionar Produto (Centralizado e Flutuante) */}
           <TouchableOpacity style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center', marginTop: -40, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 }} onPress={abrirModalNovo}>
             <Ionicons name="add" size={32} color="#fff" />
+          </TouchableOpacity>
+
+          {/* NOVO: Botão de Histórico */}
+          <TouchableOpacity onPress={() => navigation.navigate('Movimentacoes')} style={{ width: 60, alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="time-outline" size={28} color="#555" />
+            <Text style={{ fontSize: 10, color: '#555', marginTop: 2, fontWeight: 'bold' }}>Histórico</Text>
           </TouchableOpacity>
         </View>
 
@@ -807,6 +959,20 @@ const EmptyScreen = () => {
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                     <TextInput placeholder="Estoque Atual" placeholderTextColor="#999" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                     <TextInput placeholder="Estoque Mín." placeholderTextColor="#999" value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                  </View>
+
+                  <View style={{ marginTop: 10, padding: 15, backgroundColor: '#f8f9fa', borderRadius: 8, borderWidth: 1, borderColor: '#eee' }}>
+                    <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#555', marginBottom: 10 }}>Alertas para este produto:</Text>
+                    
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                      <Text style={{ fontSize: 14, color: '#333', flex: 1 }}>Avisar quando atingir o estoque mínimo</Text>
+                      <Switch value={notificarMinimo} onValueChange={setNotificarMinimo} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={notificarMinimo ? "#007AFF" : "#f4f3f4"} />
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 14, color: '#333', flex: 1 }}>Avisar sobre qualquer entrada ou saída</Text>
+                      <Switch value={notificarMovimentacao} onValueChange={setNotificarMovimentacao} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={notificarMovimentacao ? "#007AFF" : "#f4f3f4"} />
+                    </View>
                   </View>
 
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 15 }}>
@@ -1361,6 +1527,89 @@ const CustomDrawerContent = (props) => {
   );
 };
 
+// ----------------------
+// SCREEN: HISTÓRICO DE MOVIMENTAÇÕES
+// ----------------------
+const MovimentacoesScreen = ({ navigation }) => {
+  const lojaAtiva = useStore(state => state.lojaAtiva);
+  const [movimentacoes, setMovimentacoes] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const carregarHistorico = async () => {
+      // Fazemos um Inner Join para puxar apenas movimentações de produtos da loja ativa, trazendo também o nome do produto
+      const { data, error } = await supabase
+        .from('movimentacoes')
+        .select(`
+          id, tipo, quantidade, observacao, criado_em,
+          produtos!inner(nome, loja_id)
+        `)
+        .eq('produtos.loja_id', lojaAtiva.id)
+        .order('criado_em', { ascending: false });
+
+      if (data) setMovimentacoes(data);
+      setLoading(false);
+    };
+    carregarHistorico();
+  }, [lojaAtiva]);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
+      {/* Cabeçalho da Tela */}
+      <View style={{ paddingTop: Platform.OS === 'android' ? 40 : 50, paddingBottom: 15, paddingHorizontal: 20, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#eee' }}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginRight: 15 }}>
+          <Ionicons name="arrow-back" size={28} color="#333" />
+        </TouchableOpacity>
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>Histórico da Loja</Text>
+      </View>
+
+      {loading ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator size="large" color="#007AFF" /></View>
+      ) : movimentacoes.length === 0 ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <Ionicons name="document-text-outline" size={64} color="#ccc" />
+          <Text style={{ marginTop: 20, fontSize: 16, color: '#999', textAlign: 'center' }}>Nenhuma movimentação registrada ainda.</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={movimentacoes}
+          keyExtractor={(item) => item.id.toString()}
+          contentContainerStyle={{ padding: 15 }}
+          renderItem={({ item }) => {
+            const isEntrada = item.tipo === 'ENTRADA';
+            const dataFormatada = new Date(item.criado_em).toLocaleDateString('pt-BR');
+            const horaFormatada = new Date(item.criado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+            return (
+              <View style={{ backgroundColor: '#fff', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+                
+                {/* Ícone de Entrada (Verde) ou Saída (Vermelho) */}
+                <View style={{ width: 45, height: 45, borderRadius: 22.5, backgroundColor: isEntrada ? '#e8f5e9' : '#ffebee', justifyContent: 'center', alignItems: 'center', marginRight: 15 }}>
+                  <Ionicons name={isEntrada ? "arrow-down" : "arrow-up"} size={24} color={isEntrada ? "#4CAF50" : "#d9534f"} />
+                </View>
+
+                {/* Detalhes do Produto */}
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.produtos.nome}</Text>
+                  <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{dataFormatada} às {horaFormatada}</Text>
+                  <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>Motivo: {item.observacao}</Text>
+                </View>
+
+                {/* Quantidade */}
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={{ fontSize: 18, fontWeight: 'bold', color: isEntrada ? '#4CAF50' : '#d9534f' }}>
+                    {isEntrada ? "+" : "-"}{item.quantidade}
+                  </Text>
+                </View>
+              </View>
+            );
+          }}
+        />
+      )}
+    </View>
+  );
+};
+
 const MainAppDrawer = () => {
   const setLojas = useStore(state => state.setLojas);
   // NOVO: Precisamos puxar a lojaAtiva aqui também para o cabeçalho saber o nome!
@@ -1431,6 +1680,14 @@ const AuthNavigator = () => (
   </Stack.Navigator>
 );
 
+// --- NOVO: Agrupa o Drawer e as novas telas para quem já está logado ---
+const MainAppNavigator = () => (
+  <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Screen name="Drawer" component={MainAppDrawer} />
+    <Stack.Screen name="Movimentacoes" component={MovimentacoesScreen} />
+  </Stack.Navigator>
+);
+
 export default function App() {
   const isLoggedIn = useStore(state => state.isLoggedIn);
   const setAuthState = useStore(state => state.setAuthState);
@@ -1455,7 +1712,8 @@ export default function App() {
         {!isLoggedIn ? (
           <Stack.Screen name="Auth" component={AuthNavigator} />
         ) : (
-          <Stack.Screen name="MainApp" component={MainAppDrawer} />
+          // Usamos o MainAppNavigator em vez de ir direto pro Drawer
+          <Stack.Screen name="MainApp" component={MainAppNavigator} /> 
         )}
       </Stack.Navigator>
     </NavigationContainer>
