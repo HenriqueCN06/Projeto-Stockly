@@ -240,7 +240,7 @@ const SignUpScreen = ({ navigation }) => {
     if (data.user) {
       const { error: profileError } = await supabase
         .from('perfis')
-        .insert([{ id: data.user.id, nome: nome }]);
+        .insert([{ id: data.user.id, nome: nome, email: email }]);
       if (profileError) console.log("Erro ao salvar perfil:", profileError);
     }
     
@@ -997,19 +997,24 @@ const EmptyScreen = ({ navigation }) => {
         {/* BARRA INFERIOR (MENU) */}
         <View style={{ height: Platform.OS === 'android' ? 90 : 70, paddingBottom: Platform.OS === 'android' ? 20 : 0, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#e0e0e0', flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' }}>
           
-          {/* 2 Espaços Invisíveis na esquerda para equilibrar com os 2 botões da direita */}
+          {/* Espaço invisível na extrema esquerda */}
           <View style={{ width: 60 }} />
-          <View style={{ width: 60 }} />
+
+          {/* NOVO: Botão de Equipe (Acessos) */}
+          <TouchableOpacity onPress={() => navigation.navigate('Equipe')} style={{ width: 60, alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="people-outline" size={28} color="#555" />
+            <Text style={{ fontSize: 10, color: '#555', marginTop: 2, fontWeight: 'bold' }}>Equipe</Text>
+          </TouchableOpacity>
 
           {/* Botão de Adicionar Produto (Centralizado) */}
           <TouchableOpacity style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center', marginTop: -40, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 }} onPress={abrirModalNovo}>
             <Ionicons name="add" size={32} color="#fff" />
           </TouchableOpacity>
 
-          {/* NOVO: Botão de Notificações com Bolinha Vermelha */}
+          {/* Botão de Notificações com Bolinha Vermelha */}
           <TouchableOpacity 
             onPress={() => {
-              setUnreadNotifCount(0); // Apaga a bolinha antes de mudar de tela
+              setUnreadNotifCount(0); 
               navigation.navigate('Notificacoes');
             }} 
             style={{ width: 60, alignItems: 'center', justifyContent: 'center' }}
@@ -1668,6 +1673,372 @@ const CustomDrawerContent = (props) => {
 };
 
 // ----------------------
+// SCREEN: EQUIPE E PERMISSÕES (RBAC Granular)
+// ----------------------
+const EquipeScreen = ({ navigation }) => {
+  const lojaAtiva = useStore(state => state.lojaAtiva);
+  const [equipe, setEquipe] = useState([]);
+  const [emailConvite, setEmailConvite] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [loadingList, setLoadingList] = useState(true);
+  const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
+  const [modalRemoverVisible, setModalRemoverVisible] = useState(false);
+  const [membroParaRemover, setMembroParaRemover] = useState(null);
+
+  // Estados do Modal de Permissões
+  const [modalPermissoesVisible, setModalPermissoesVisible] = useState(false);
+  const [membroSelecionado, setMembroSelecionado] = useState(null);
+  const [loadingPerms, setLoadingPerms] = useState(false);
+  const [perms, setPerms] = useState({
+    quantidades: false,
+    adicionar: false,
+    editar: false,
+    gerenciar: false
+  });
+
+  const showBanner = (message, type = 'success') => {
+    setNotification({ visible: true, message, type });
+    setTimeout(() => setNotification({ visible: false, message: '', type: 'success' }), 3000);
+  };
+
+  const carregarEquipe = async () => {
+    setLoadingList(true);
+    try {
+      // 1. Busca os membros colaboradores na tabela 'equipe'
+      const { data: equipeData, error: errorEquipe } = await supabase
+        .from('equipe')
+        .select('*')
+        .eq('loja_id', lojaAtiva.id);
+
+      if (errorEquipe) throw errorEquipe;
+
+      // 2. Prepara a lista de IDs para buscar os nomes (Membros + Dono)
+      const idsUsuarios = (equipeData || []).map(m => m.usuario_id);
+      if (!idsUsuarios.includes(lojaAtiva.dono_id)) {
+        idsUsuarios.push(lojaAtiva.dono_id);
+      }
+
+      // 3. Busca todos os perfis
+      const { data: perfisData, error: errorPerfis } = await supabase
+        .from('perfis')
+        .select('id, nome, email')
+        .in('id', idsUsuarios);
+
+      if (errorPerfis) throw errorPerfis;
+
+      const listaFinal = [];
+
+      // 4. Adiciona o Dono no topo (O Dono tem todas as permissões virtuais)
+      const perfilDono = perfisData.find(p => p.id === lojaAtiva.dono_id);
+      if (perfilDono) {
+        listaFinal.push({
+          id: 'owner_row',
+          usuario_id: lojaAtiva.dono_id,
+          isOwner: true,
+          perm_editar_quantidades: true,
+          perm_adicionar_produto: true,
+          perm_editar_produto: true,
+          perm_gerenciar_membros: true,
+          perfis: perfilDono
+        });
+      }
+
+      // 5. Adiciona os demais membros
+      if (equipeData) {
+        equipeData.forEach(membro => {
+          if (membro.usuario_id !== lojaAtiva.dono_id) {
+            const perfil = perfisData.find(p => p.id === membro.usuario_id);
+            listaFinal.push({ ...membro, perfis: perfil || { nome: 'Usuário Desconhecido', email: '' } });
+          }
+        });
+      }
+
+      setEquipe(listaFinal);
+    } catch (error) {
+      console.log("Erro ao carregar equipe:", error);
+    } finally {
+      setLoadingList(false);
+    }
+  };
+
+  useEffect(() => {
+    if (lojaAtiva) carregarEquipe();
+  }, [lojaAtiva]);
+
+  const handleConvidar = async () => {
+    if (!emailConvite) return;
+    setLoading(true);
+
+    try {
+      const { data: perfil, error: erroPerfil } = await supabase.from('perfis').select('id, nome').eq('email', emailConvite.toLowerCase().trim()).maybeSingle();
+      if (erroPerfil) throw erroPerfil;
+      
+      if (!perfil) { 
+        showBanner("Usuário não encontrado. Peça para criar uma conta.", "error"); 
+        setLoading(false); 
+        return; 
+      }
+
+      const jaExiste = equipe.some(membro => membro.usuario_id === perfil.id);
+      if (jaExiste) { 
+        showBanner("Esta pessoa já faz parte da equipe.", "error"); 
+        setLoading(false); 
+        return; 
+      }
+
+      const { error: erroInsert } = await supabase.from('equipe').insert([{
+        loja_id: lojaAtiva.id,
+        usuario_id: perfil.id,
+        perm_editar_quantidades: false,
+        perm_adicionar_produto: false,
+        perm_editar_produto: false,
+        perm_gerenciar_membros: false
+      }]);
+
+      if (erroInsert) throw erroInsert;
+
+      showBanner(`${perfil.nome} foi adicionado(a) à equipe!`, "success");
+      setEmailConvite('');
+      await carregarEquipe();
+    } catch (error) {
+      showBanner(error.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemoverMembro = (membroId, nome) => {
+    setMembroParaRemover({ id: membroId, nome });
+    setModalRemoverVisible(true);
+  };
+
+  const confirmarRemocao = async () => {
+    if (!membroParaRemover) return;
+    setLoading(true);
+    try {
+      await supabase.from('equipe').delete().eq('id', membroParaRemover.id);
+      await carregarEquipe();
+      setModalRemoverVisible(false);
+      showBanner(`${membroParaRemover.nome} foi removido(a).`, "success");
+    } catch (error) {
+      showBanner("Erro ao remover membro.", "error");
+    } finally {
+      setLoading(false);
+      setMembroParaRemover(null);
+    }
+  };
+
+  // --- FUNÇÕES DO MODAL DE PERMISSÕES ---
+  const abrirModalPermissoes = (membro) => {
+    setMembroSelecionado(membro);
+    setPerms({
+      quantidades: membro.perm_editar_quantidades || false,
+      adicionar: membro.perm_adicionar_produto || false,
+      editar: membro.perm_editar_produto || false,
+      gerenciar: membro.perm_gerenciar_membros || false
+    });
+    setModalPermissoesVisible(true);
+  };
+
+  const salvarPermissoes = async () => {
+    setLoadingPerms(true);
+    try {
+      const { error } = await supabase
+        .from('equipe')
+        .update({
+          perm_editar_quantidades: perms.quantidades,
+          perm_adicionar_produto: perms.adicionar,
+          perm_editar_produto: perms.editar,
+          perm_gerenciar_membros: perms.gerenciar
+        })
+        .eq('id', membroSelecionado.id);
+
+      if (error) throw error;
+
+      setModalPermissoesVisible(false);
+      await carregarEquipe();
+    } catch (error) {
+      Alert.alert("Erro", "Não foi possível salvar as permissões.");
+    } finally {
+      setLoadingPerms(false);
+    }
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
+      {/* NOTIFICAÇÃO VISUAL DO BANNER */}
+      {notification.visible && (
+        <View style={[
+          styles.topNotification, 
+          { 
+            backgroundColor: notification.type === 'error' ? 'rgba(244, 67, 54, 0.9)' : 'rgba(76, 175, 80, 0.9)', 
+            zIndex: 999, 
+            top: 20,
+            position: 'absolute', left: 20, right: 20, padding: 15, borderRadius: 8, alignItems: 'center'
+          }
+        ]}>
+          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
+            {notification.message}
+          </Text>
+        </View>
+      )}
+      <View style={{ paddingTop: Platform.OS === 'android' ? 40 : 50, paddingBottom: 15, paddingHorizontal: 20, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#eee' }}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginRight: 15 }}>
+          <Ionicons name="arrow-back" size={28} color="#333" />
+        </TouchableOpacity>
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>Equipe do Estoque</Text>
+      </View>
+
+      <View style={{ padding: 20, backgroundColor: '#fff', marginBottom: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+        <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333', marginBottom: 10 }}>Adicionar Membro</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TextInput placeholder="E-mail do usuário..." placeholderTextColor="#999" value={emailConvite} onChangeText={setEmailConvite} style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, backgroundColor: '#fafafa', color: '#333', marginRight: 10 }} keyboardType="email-address" autoCapitalize="none" />
+          <TouchableOpacity onPress={handleConvidar} disabled={loading || !emailConvite} style={{ backgroundColor: (loading || !emailConvite) ? '#a0cbfc' : '#007AFF', padding: 12, borderRadius: 8, width: 60, alignItems: 'center' }}>
+            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={20} color="#fff" />}
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={{ flex: 1, paddingHorizontal: 20 }}>
+        <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#888', marginVertical: 15, textTransform: 'uppercase' }}>Membros Atuais</Text>
+        
+        {loadingList ? (
+          <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+        ) : equipe.length === 0 ? (
+          <View style={{ flex: 1, alignItems: 'center', paddingTop: '30%' }}>
+            <Ionicons name="people-outline" size={48} color="#ccc" />
+            <Text style={{ color: '#999', marginTop: 10, fontSize: 15 }}>Apenas você tem acesso a esse estoque.</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={equipe}
+            keyExtractor={(item) => item.id.toString()}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) => (
+              <TouchableOpacity 
+                activeOpacity={item.isOwner ? 1 : 0.6}
+                onPress={() => !item.isOwner && abrirModalPermissoes(item)}
+                style={{ backgroundColor: '#fff', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, elevation: 1, borderWidth: 1, borderColor: item.isOwner ? '#ffc107' : 'transparent' }}
+              >
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: item.isOwner ? '#fff3cd' : '#e6f2ff', justifyContent: 'center', alignItems: 'center', marginRight: 15 }}>
+                  <Text style={{ color: item.isOwner ? '#ffc107' : '#007AFF', fontWeight: 'bold', fontSize: 16 }}>
+                    {item.perfis?.nome ? item.perfis.nome.charAt(0).toUpperCase() : '?'}
+                  </Text>
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>
+                    {item.perfis?.nome || 'Usuário'} {item.isOwner && <Text style={{ fontSize: 12, color: '#ffc107' }}> (Dono)</Text>}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#888' }}>{item.perfis?.email}</Text>
+                </View>
+
+                {!item.isOwner && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="settings-outline" size={22} color="#007AFF" style={{ marginRight: 15 }} />
+                    <TouchableOpacity onPress={() => handleRemoverMembro(item.id, item.perfis?.nome)} style={{ padding: 5 }}>
+                      <Ionicons name="trash-outline" size={22} color="#d9534f" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </TouchableOpacity>
+            )}
+          />
+        )}
+        {/* MODAL PADRONIZADO: REMOVER DA EQUIPE */}
+        <Modal visible={modalRemoverVisible} transparent={true} animationType="fade">
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '85%', overflow: 'hidden' }}>
+              <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="warning" size={22} color="#d9534f" style={{ marginRight: 10 }} />
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>Remover da Equipe?</Text>
+              </View>
+              <View style={{ padding: 20 }}>
+                <Text style={{ fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 20, lineHeight: 22 }}>
+                  Tem certeza que deseja remover <Text style={{ fontWeight: 'bold', color: '#333' }}>{membroParaRemover?.nome}</Text> do estoque?
+                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <TouchableOpacity onPress={() => setModalRemoverVisible(false)} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} disabled={loading}>
+                    <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={confirmarRemocao} disabled={loading} style={{ flex: 1, backgroundColor: '#d9534f', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}>
+                    <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Removendo..." : "Sim, remover"}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </View>
+
+      {/* --- MODAL DE PERMISSÕES --- */}
+      <Modal visible={modalPermissoesVisible} transparent={true} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 15, width: '90%', padding: 25, shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 10 }}>
+            
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <View>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>Editar Permissões</Text>
+                <Text style={{ fontSize: 14, color: '#888' }}>{membroSelecionado?.perfis?.nome}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setModalPermissoesVisible(false)}>
+                <Ionicons name="close" size={28} color="#999" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Configuração dos Switches */}
+            <View style={{ marginBottom: 25 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Editar Quantidades</Text>
+                  <Text style={{ fontSize: 12, color: '#888' }}>Permite usar os botões + e - no estoque.</Text>
+                </View>
+                <Switch value={perms.quantidades} onValueChange={(val) => setPerms({...perms, quantidades: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.quantidades ? "#007AFF" : "#f4f3f4"} />
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Adicionar Produtos</Text>
+                  <Text style={{ fontSize: 12, color: '#888' }}>Permite criar novos produtos no sistema.</Text>
+                </View>
+                <Switch value={perms.adicionar} onValueChange={(val) => setPerms({...perms, adicionar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.adicionar ? "#007AFF" : "#f4f3f4"} />
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Editar Produtos</Text>
+                  <Text style={{ fontSize: 12, color: '#888' }}>Permite alterar preços, nomes e alertas.</Text>
+                </View>
+                <Switch value={perms.editar} onValueChange={(val) => setPerms({...perms, editar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.editar ? "#007AFF" : "#f4f3f4"} />
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Membros</Text>
+                  <Text style={{ fontSize: 12, color: '#888' }}>Permite convidar e alterar acessos da equipe.</Text>
+                </View>
+                <Switch value={perms.gerenciar} onValueChange={(val) => setPerms({...perms, gerenciar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar ? "#007AFF" : "#f4f3f4"} />
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <TouchableOpacity onPress={() => setModalPermissoesVisible(false)} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} disabled={loadingPerms}>
+                <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={salvarPermissoes} disabled={loadingPerms} style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}>
+                <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loadingPerms ? "Salvando..." : "Salvar"}</Text>
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
+      </Modal>
+
+    </View>
+  );
+};
+
+// ----------------------
 // SCREEN: NOTIFICAÇÕES (VERSÃO PRO)
 // ----------------------
 const NotificacoesScreen = ({ navigation }) => {
@@ -2095,6 +2466,7 @@ const MainAppNavigator = () => (
     <Stack.Screen name="Drawer" component={MainAppDrawer} />
     <Stack.Screen name="Movimentacoes" component={MovimentacoesScreen} />
     <Stack.Screen name="Notificacoes" component={NotificacoesScreen} />
+    <Stack.Screen name="Equipe" component={EquipeScreen} />
   </Stack.Navigator>
 );
 
