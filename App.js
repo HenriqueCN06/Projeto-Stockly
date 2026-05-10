@@ -38,10 +38,16 @@ const useStore = create((set) => ({
   setAuthState: (status) => set({ isLoggedIn: status }),
   isFetchingLojas: true,
   setIsFetchingLojas: (status) => set({ isFetchingLojas: status }),
-  lojas: [],
+  
+  lojas: [], 
+  lojasMembro: [], 
+  
   lojaAtiva: null,
+  permissoesAtivas: null,
   setLojas: (lojas) => set({ lojas }),
+  setLojasMembro: (lojas) => set({ lojasMembro: lojas }), 
   setLojaAtiva: (loja) => set({ lojaAtiva: loja }),
+  setPermissoesAtivas: (perms) => set({ permissoesAtivas: perms }),
 
   products: [],
   setProducts: (products) => set({ products }),
@@ -318,6 +324,7 @@ const SignUpScreen = ({ navigation }) => {
 
 const EmptyScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
+  const permissoesAtivas = useStore(state => state.permissoesAtivas);
   const isFetchingLojas = useStore(state => state.isFetchingLojas);
   
   const products = useStore(state => state.products);
@@ -474,6 +481,10 @@ const EmptyScreen = ({ navigation }) => {
   ];
 
   const abrirModalNovo = () => {
+    if (!permissoesAtivas?.adicionar) {
+      showBanner("Sem permissão para adicionar produtos.", "error");
+      return;
+    }
     setProdutoEditando(null); 
     setNome(''); setSku(''); setPrecoCusto(''); setPrecoVenda(''); setEstoqueAtual(''); setEstoqueMinimo('');
     setNotificarMinimo(false); setNotificarMovimentacao(false); // Limpa as chaves
@@ -481,6 +492,10 @@ const EmptyScreen = ({ navigation }) => {
   };
 
   const abrirModalEdicao = (produto) => {
+    if (!permissoesAtivas?.editar) {
+      showBanner("Sem permissão para editar produtos.", "error");
+      return;
+    }
     setProdutoEditando(produto); 
     setNome(produto.nome);
     setSku(produto.sku_barcode && produto.sku_barcode.startsWith('INT-') ? '' : produto.sku_barcode);
@@ -702,8 +717,12 @@ const EmptyScreen = ({ navigation }) => {
   };
 
   const handleAjusteEstoque = async (produto, mudanca) => {
+    if (!permissoesAtivas?.quantidades) {
+      showBanner("Sem permissão para alterar o estoque.", "error");
+      return;
+    }
     const novoEstoque = produto.estoque_atual + mudanca;
-    if (novoEstoque < 0) return; 
+    if (novoEstoque < 0) return;
     
     // Atualiza a tela instantaneamente
     setProducts(products.map(p => p.id === produto.id ? { ...p, estoque_atual: novoEstoque } : p));
@@ -931,6 +950,10 @@ const EmptyScreen = ({ navigation }) => {
                       ) : (
                         <TouchableOpacity 
                           onPress={() => { 
+                            if (!permissoesAtivas?.quantidades) {
+                              showBanner("Sem permissão para alterar o estoque.", "error");
+                              return;
+                            }
                             setEditingStockId(item.id); 
                             setTempStockValue(item.estoque_atual.toString()); 
                           }}
@@ -1217,6 +1240,7 @@ const Drawer = createDrawerNavigator();
 const CustomDrawerContent = (props) => {
   // Estados do Modal de Criar
   const [modalVisible, setModalVisible] = useState(false);
+  const [modalSairVisible, setModalSairVisible] = useState(false);
   const [nomeEstoque, setNomeEstoque] = useState('');
   const [loading, setLoading] = useState(false);
   
@@ -1230,6 +1254,7 @@ const CustomDrawerContent = (props) => {
 
   // Estados Globais
   const lojas = useStore(state => state.lojas);
+  const lojasMembro = useStore(state => state.lojasMembro);
   const setLojas = useStore(state => state.setLojas);
   const lojaAtiva = useStore(state => state.lojaAtiva);
   const setLojaAtiva = useStore(state => state.setLojaAtiva);
@@ -1397,6 +1422,67 @@ const CustomDrawerContent = (props) => {
     }
   };
 
+  // Função para desenhar cada item da lista de forma limpa
+    const renderItemLoja = (loja, eDono) => {
+    const isActive = lojaAtiva && lojaAtiva.id === loja.id;
+    return (
+      <View key={loja.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 5, backgroundColor: isActive ? '#e6f2ff' : 'transparent', borderRadius: 8, overflow: 'hidden' }}>
+        <TouchableOpacity 
+          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingLeft: 10 }} 
+          onPress={() => { setLojaAtiva(loja); props.navigation.closeDrawer(); }}
+        >
+          <Ionicons name={isActive ? "storefront" : "storefront-outline"} size={22} color={isActive ? "#007AFF" : "#555"} style={{ marginRight: 15 }} />
+          <Text style={{ fontSize: 15, fontWeight: isActive ? 'bold' : '500', color: isActive ? '#007AFF' : '#555' }} numberOfLines={1}>
+            {loja.nome}
+          </Text>
+        </TouchableOpacity>
+
+        {/* AGORA MOSTRA PARA TODOS, mas passamos se é dono ou não para o modal */}
+        <TouchableOpacity 
+          style={{ padding: 12, paddingRight: 15 }} 
+          onPress={() => { 
+            setEstoqueOpcoes({...loja, eDono}); // Guardamos se é dono no estado
+            setModalOpcoesVisible(true); 
+          }}
+        >
+          <Ionicons name="ellipsis-vertical" size={20} color={isActive ? "#007AFF" : "#888"} />
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const handleSairDoEstoque = async () => {
+    setLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      // Remove apenas a entrada do usuário na tabela equipe para essa loja
+      const { error } = await supabase
+        .from('equipe')
+        .delete()
+        .eq('loja_id', estoqueOpcoes.id)
+        .eq('usuario_id', user.id);
+
+      if (error) throw error;
+
+      // Atualiza a lista lateral removendo essa loja dos compartilhados
+      const novasCompartilhadas = lojasMembro.filter(l => l.id !== estoqueOpcoes.id);
+      useStore.getState().setLojasMembro(novasCompartilhadas);
+
+      // Se saiu da loja que estava aberta, tenta abrir uma loja própria ou limpa a tela
+      if (lojaAtiva?.id === estoqueOpcoes.id) {
+        setLojaAtiva(lojas.length > 0 ? lojas[0] : (novasCompartilhadas.length > 0 ? novasCompartilhadas[0] : null));
+      }
+
+      setModalSairVisible(false); // <-- AGORA FECHA O NOVO MODAL
+      Alert.alert("Sucesso", "Você saiu do estoque compartilhado.");
+    } catch (error) {
+      Alert.alert("Erro ao sair", error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <View style={{ flex: 1 }}>
       
@@ -1430,88 +1516,45 @@ const CustomDrawerContent = (props) => {
 
       {/* 2. NOVO: Modal do Menu Flutuante (Opções) */}
       <Modal visible={modalOpcoesVisible} transparent={true} animationType="fade">
-        <TouchableOpacity 
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }} 
-          activeOpacity={1} 
-          onPress={() => setModalOpcoesVisible(false)}
-        >
-          <TouchableWithoutFeedback>
-            <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '75%', overflow: 'hidden' }}>
-              <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee' }}>
-                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333', textAlign: 'center' }}>
-                  {estoqueOpcoes?.nome}
-                </Text>
-              </View>
-              
-              {/* Oculta 'Mover para cima' se já for o primeiro */}
-              {lojas.findIndex(l => l.id === estoqueOpcoes?.id) > 0 && (
-                <TouchableOpacity 
-                  style={{ flexDirection: 'row', alignItems: 'center', padding: 18, borderBottomWidth: 1, borderColor: '#eee' }}
-                  onPress={() => moverEstoque('cima')}
-                  disabled={loading}
-                >
-                  <View style={{ width: 30, alignItems: 'center' }}>
-                    <Ionicons name="arrow-up" size={20} color="#555" />
-                  </View>
-                  <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, color: '#555', fontWeight: 'bold' }}>
-                    {loading ? "Movendo..." : "Mover para cima"}
-                  </Text>
-                  <View style={{ width: 30 }} />
-                </TouchableOpacity>
-              )}
-
-              {/* Oculta 'Mover para baixo' se já for o último */}
-              {lojas.findIndex(l => l.id === estoqueOpcoes?.id) < lojas.length - 1 && (
-                <TouchableOpacity 
-                  style={{ flexDirection: 'row', alignItems: 'center', padding: 18, borderBottomWidth: 1, borderColor: '#eee' }}
-                  onPress={() => moverEstoque('baixo')}
-                  disabled={loading}
-                >
-                  <View style={{ width: 30, alignItems: 'center' }}>
-                    <Ionicons name="arrow-down" size={20} color="#555" />
-                  </View>
-                  <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, color: '#555', fontWeight: 'bold' }}>
-                    {loading ? "Movendo..." : "Mover para baixo"}
-                  </Text>
-                  <View style={{ width: 30 }} />
-                </TouchableOpacity>
-              )}
-
-              {/* Botões originais: Renomear e Apagar */}
-              <TouchableOpacity 
-                style={{ flexDirection: 'row', alignItems: 'center', padding: 18, borderBottomWidth: 1, borderColor: '#eee' }}
-                onPress={() => {
-                  setNovoNome(estoqueOpcoes?.nome || '');
-                  setModalOpcoesVisible(false);
-                  setTimeout(() => setModalRenomearVisible(true), 100);
-                }}
-              >
-                <View style={{ width: 30, alignItems: 'center' }}>
-                  <Ionicons name="pencil" size={20} color="#007AFF" />
-                </View>
-                <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, color: '#007AFF', fontWeight: 'bold' }}>
-                  Renomear estoque
-                </Text>
-                <View style={{ width: 30 }} />
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={{ flexDirection: 'row', alignItems: 'center', padding: 18 }}
-                onPress={() => {
-                  setModalOpcoesVisible(false);
-                  setTimeout(() => setModalApagarVisible(true), 100);
-                }}
-              >
-                <View style={{ width: 30, alignItems: 'center' }}>
-                  <Ionicons name="trash" size={20} color="#d9534f" />
-                </View>
-                <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, color: '#d9534f', fontWeight: 'bold' }}>
-                  Apagar estoque
-                </Text>
-                <View style={{ width: 30 }} />
-              </TouchableOpacity>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setModalOpcoesVisible(false)}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '75%', overflow: 'hidden' }}>
+            <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee' }}>
+              <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333', textAlign: 'center' }}>{estoqueOpcoes?.nome}</Text>
             </View>
-          </TouchableWithoutFeedback>
+            
+            {estoqueOpcoes?.eDono ? (
+              // OPÇÕES PARA O DONO
+              <>
+                <TouchableOpacity 
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 18, borderBottomWidth: 1, borderColor: '#f0f0f0' }} 
+                  onPress={() => { setNovoNome(estoqueOpcoes?.nome); setModalOpcoesVisible(false); setTimeout(() => setModalRenomearVisible(true), 100); }}
+                >
+                  <Ionicons name="pencil" size={22} color="#007AFF" style={{ marginRight: 8 }} />
+                  <Text style={{ fontSize: 16, color: '#007AFF', fontWeight: '500' }}>Renomear estoque</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 18 }} 
+                  onPress={() => { setModalOpcoesVisible(false); setTimeout(() => setModalApagarVisible(true), 100); }}
+                >
+                  <Ionicons name="trash" size={22} color="#d9534f" style={{ marginRight: 8 }} />
+                  <Text style={{ fontSize: 16, color: '#d9534f', fontWeight: '500' }}>Apagar estoque</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              // OPÇÃO PARA O MEMBRO CONVIDADO
+              <TouchableOpacity 
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 18 }} 
+                onPress={() => {
+                  setModalOpcoesVisible(false);
+                  setTimeout(() => setModalSairVisible(true), 100); // Abre o novo Modal bonitão
+                }}
+              >
+                <Ionicons name="log-out-outline" size={22} color="#d9534f" style={{ marginRight: 8 }} />
+                <Text style={{ fontSize: 16, color: '#d9534f', fontWeight: '500' }}>Sair do estoque</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </TouchableOpacity>
       </Modal>
 
@@ -1585,6 +1628,44 @@ const CustomDrawerContent = (props) => {
         </View>
       </Modal>
 
+      {/* 5. NOVO: Modal de Confirmar Saída */}
+      <Modal visible={modalSairVisible} transparent={true} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '85%', overflow: 'hidden' }}>
+            
+            <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="log-out-outline" size={24} color="#d9534f" style={{ marginRight: 10 }} />
+              <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>Sair do Estoque?</Text>
+            </View>
+            
+            <View style={{ padding: 20 }}>
+              <Text style={{ fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 20, lineHeight: 22 }}>
+                Tem certeza que deseja sair do estoque <Text style={{ fontWeight: 'bold', color: '#333' }}>{estoqueOpcoes?.nome}</Text>? Você perderá o acesso aos produtos e precisará de um novo convite para voltar.
+              </Text>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <TouchableOpacity 
+                  onPress={() => setModalSairVisible(false)} 
+                  style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} 
+                  disabled={loading}
+                >
+                  <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  onPress={handleSairDoEstoque} 
+                  disabled={loading} 
+                  style={{ flex: 1, backgroundColor: '#d9534f', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loading ? "Saindo..." : "Sim, sair"}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+          </View>
+        </View>
+      </Modal>
+
       <DrawerContentScrollView {...props}>
         <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', padding: 20, paddingTop: 10 }} onPress={() => setModalVisible(true)}>
           <Ionicons name="add-circle" size={26} color="#007AFF" style={{ marginRight: 15 }} />
@@ -1593,66 +1674,25 @@ const CustomDrawerContent = (props) => {
 
         <View style={{ height: 1, backgroundColor: '#eee', marginHorizontal: 20, marginBottom: 10 }} />
 
-        {/* --- LISTA DINÂMICA DE ESTOQUES (AGORA COM OS TRÊS PONTINHOS) --- */}
+        {/* --- LISTA DINÂMICA DE ESTOQUES --- */}
         <View style={{ paddingHorizontal: 10 }}>
-          {lojas.length === 0 ? (
-            <Text style={{ textAlign: 'center', color: '#999', marginTop: 10, fontSize: 14 }}>Você ainda não possui estoques.</Text>
+          
+          {/* SEÇÃO: MEUS ESTOQUES */}
+          <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#999', marginLeft: 10, marginTop: 10, marginBottom: 5 }}>MEUS ESTOQUES</Text>
+          {(!lojas || lojas.length === 0) ? (
+            <Text style={{ marginLeft: 10, color: '#ccc', fontSize: 13, marginBottom: 15 }}>Nenhum estoque criado.</Text>
           ) : (
-            lojas.map((loja) => {
-              const isActive = lojaAtiva && lojaAtiva.id === loja.id;
-              
-              return (
-                // 1. O fundo azul e o arredondamento agora ficam na View "pai" que engloba tudo!
-                <View 
-                  key={loja.id} 
-                  style={{ 
-                    flexDirection: 'row', 
-                    alignItems: 'center', 
-                    marginBottom: 5,
-                    backgroundColor: isActive ? '#e6f2ff' : 'transparent',
-                    borderRadius: 8,
-                  }}
-                >
-                  
-                  {/* 2. Área de Selecionar o Estoque (Ocupa o espaço da esquerda) */}
-                  <TouchableOpacity 
-                    style={{ 
-                      flex: 1, 
-                      flexDirection: 'row', 
-                      alignItems: 'center', 
-                      paddingVertical: 12,
-                      paddingLeft: 10,
-                    }} 
-                    onPress={() => {
-                      setLojaAtiva(loja);
-                      props.navigation.closeDrawer();
-                    }}
-                  >
-                    <Ionicons name={isActive ? "storefront" : "storefront-outline"} size={22} color={isActive ? "#007AFF" : "#555"} style={{ marginRight: 15 }} />
-                    <Text style={{ fontSize: 15, fontWeight: isActive ? 'bold' : '500', color: isActive ? '#007AFF' : '#555' }} numberOfLines={1}>
-                      {loja.nome}
-                    </Text>
-                  </TouchableOpacity>
+            lojas.map((loja) => renderItemLoja(loja, true)) 
+          )}
 
-                  {/* 3. Botão dos 3 pontinhos (Agora dentro do fundo azul) */}
-                  <TouchableOpacity 
-                    style={{ padding: 12, paddingRight: 15 }} 
-                    onPress={() => {
-                      setEstoqueOpcoes(loja); // Avisa pro estado qual loja foi clicada
-                      setModalOpcoesVisible(true); // Abre o menu flutuante
-                    }}
-                  >
-                    {/* Cor dinâmica: Azul se estiver ativo, cinza se não estiver */}
-                    <Ionicons 
-                      name="ellipsis-vertical" 
-                      size={20} 
-                      color={isActive ? "#007AFF" : "#888"} 
-                    />
-                  </TouchableOpacity>
-                  
-                </View>
-              )
-            })
+          <View style={{ height: 1, backgroundColor: '#eee', marginHorizontal: 10, marginVertical: 10 }} />
+
+          {/* SEÇÃO: COMPARTILHADOS COMIGO */}
+          <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#999', marginLeft: 10, marginTop: 5, marginBottom: 5 }}>COMPARTILHADOS</Text>
+          {(!lojasMembro || lojasMembro.length === 0) ? (
+            <Text style={{ marginLeft: 10, color: '#ccc', fontSize: 13 }}>Nenhum estoque compartilhado.</Text>
+          ) : (
+            lojasMembro.map((loja) => renderItemLoja(loja, false))
           )}
         </View>
       </DrawerContentScrollView>
@@ -1677,6 +1717,8 @@ const CustomDrawerContent = (props) => {
 // ----------------------
 const EquipeScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
+  const permissoesAtivas = useStore(state => state.permissoesAtivas);
+  const [meuId, setMeuId] = useState(null);
   const [equipe, setEquipe] = useState([]);
   const [emailConvite, setEmailConvite] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1693,7 +1735,8 @@ const EquipeScreen = ({ navigation }) => {
     quantidades: false,
     adicionar: false,
     editar: false,
-    gerenciar: false
+    gerenciar: false,
+    gerenciar_avisos: false
   });
 
   const showBanner = (message, type = 'success') => {
@@ -1762,6 +1805,12 @@ const EquipeScreen = ({ navigation }) => {
   };
 
   useEffect(() => {
+    const buscarMeuId = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) setMeuId(user.id);
+    };
+    
+    buscarMeuId();
     if (lojaAtiva) carregarEquipe();
   }, [lojaAtiva]);
 
@@ -1835,7 +1884,8 @@ const EquipeScreen = ({ navigation }) => {
       quantidades: membro.perm_editar_quantidades || false,
       adicionar: membro.perm_adicionar_produto || false,
       editar: membro.perm_editar_produto || false,
-      gerenciar: membro.perm_gerenciar_membros || false
+      gerenciar: membro.perm_gerenciar_membros || false,
+      gerenciar_avisos: membro.perm_gerenciar_avisos || false
     });
     setModalPermissoesVisible(true);
   };
@@ -1849,7 +1899,8 @@ const EquipeScreen = ({ navigation }) => {
           perm_editar_quantidades: perms.quantidades,
           perm_adicionar_produto: perms.adicionar,
           perm_editar_produto: perms.editar,
-          perm_gerenciar_membros: perms.gerenciar
+          perm_gerenciar_membros: perms.gerenciar,
+          perm_gerenciar_avisos: perms.gerenciar_avisos
         })
         .eq('id', membroSelecionado.id);
 
@@ -1889,15 +1940,18 @@ const EquipeScreen = ({ navigation }) => {
         <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>Equipe do Estoque</Text>
       </View>
 
-      <View style={{ padding: 20, backgroundColor: '#fff', marginBottom: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
-        <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333', marginBottom: 10 }}>Adicionar Membro</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TextInput placeholder="E-mail do usuário..." placeholderTextColor="#999" value={emailConvite} onChangeText={setEmailConvite} style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, backgroundColor: '#fafafa', color: '#333', marginRight: 10 }} keyboardType="email-address" autoCapitalize="none" />
-          <TouchableOpacity onPress={handleConvidar} disabled={loading || !emailConvite} style={{ backgroundColor: (loading || !emailConvite) ? '#a0cbfc' : '#007AFF', padding: 12, borderRadius: 8, width: 60, alignItems: 'center' }}>
-            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={20} color="#fff" />}
-          </TouchableOpacity>
+      {/* SÓ MOSTRA SE TIVER PERMISSÃO */}
+      {permissoesAtivas?.gerenciar && (
+        <View style={{ padding: 20, backgroundColor: '#fff', marginBottom: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+          <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333', marginBottom: 10 }}>Adicionar Membro</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <TextInput placeholder="E-mail do usuário..." placeholderTextColor="#999" value={emailConvite} onChangeText={setEmailConvite} style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, backgroundColor: '#fafafa', color: '#333', marginRight: 10 }} keyboardType="email-address" autoCapitalize="none" />
+            <TouchableOpacity onPress={handleConvidar} disabled={loading || !emailConvite} style={{ backgroundColor: (loading || !emailConvite) ? '#a0cbfc' : '#007AFF', padding: 12, borderRadius: 8, width: 60, alignItems: 'center' }}>
+              {loading ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={20} color="#fff" />}
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      )}
 
       <View style={{ flex: 1, paddingHorizontal: 20 }}>
         <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#888', marginVertical: 15, textTransform: 'uppercase' }}>Membros Atuais</Text>
@@ -1914,35 +1968,65 @@ const EquipeScreen = ({ navigation }) => {
             data={equipe}
             keyExtractor={(item) => item.id.toString()}
             showsVerticalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <TouchableOpacity 
-                activeOpacity={item.isOwner ? 1 : 0.6}
-                onPress={() => !item.isOwner && abrirModalPermissoes(item)}
-                style={{ backgroundColor: '#fff', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, elevation: 1, borderWidth: 1, borderColor: item.isOwner ? '#ffc107' : 'transparent' }}
-              >
-                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: item.isOwner ? '#fff3cd' : '#e6f2ff', justifyContent: 'center', alignItems: 'center', marginRight: 15 }}>
-                  <Text style={{ color: item.isOwner ? '#ffc107' : '#007AFF', fontWeight: 'bold', fontSize: 16 }}>
-                    {item.perfis?.nome ? item.perfis.nome.charAt(0).toUpperCase() : '?'}
-                  </Text>
-                </View>
+            renderItem={({ item }) => {
+              const souEu = item.usuario_id === meuId; 
+              
+              // 1. Define as cores base (Amarelo para Dono, Azul para Membro)
+              const corDestaque = item.isOwner ? '#ffc107' : '#007AFF';
+              const fundoDestaque = item.isOwner ? '#fff3cd' : '#f0f7ff';
+              
+              // 2. NOVO: Lógica inteligente de contraste do círculo!
+              // Se for "Eu", o círculo fica com a cor forte. Se não for, fica com o fundo claro.
+              const fundoIcone = souEu ? corDestaque : (item.isOwner ? '#fff3cd' : '#e6f2ff');
+              // Se for "Eu", a letra fica branca. Se não for, a letra fica com a cor forte.
+              const corTextoIcone = souEu ? '#fff' : corDestaque;
 
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>
-                    {item.perfis?.nome || 'Usuário'} {item.isOwner && <Text style={{ fontSize: 12, color: '#ffc107' }}> (Dono)</Text>}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: '#888' }}>{item.perfis?.email}</Text>
-                </View>
-
-                {!item.isOwner && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="settings-outline" size={22} color="#007AFF" style={{ marginRight: 15 }} />
-                    <TouchableOpacity onPress={() => handleRemoverMembro(item.id, item.perfis?.nome)} style={{ padding: 5 }}>
-                      <Ionicons name="trash-outline" size={22} color="#d9534f" />
-                    </TouchableOpacity>
+              return (
+                <TouchableOpacity 
+                  activeOpacity={(item.isOwner || souEu || !permissoesAtivas?.gerenciar) ? 1 : 0.6}
+                  onPress={() => !item.isOwner && !souEu && permissoesAtivas?.gerenciar && abrirModalPermissoes(item)}
+                  style={{ 
+                    backgroundColor: souEu ? fundoDestaque : '#fff', 
+                    padding: 15, 
+                    borderRadius: 10, 
+                    marginBottom: 10, 
+                    flexDirection: 'row', 
+                    alignItems: 'center', 
+                    shadowColor: '#000', 
+                    shadowOffset: { width: 0, height: 1 }, 
+                    shadowOpacity: 0.05, 
+                    elevation: 1, 
+                    borderWidth: 1, 
+                    borderColor: item.isOwner ? '#ffc107' : (souEu ? '#007AFF' : '#eee') 
+                  }}
+                >
+                  <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: fundoIcone, justifyContent: 'center', alignItems: 'center', marginRight: 15 }}>
+                    <Text style={{ color: corTextoIcone, fontWeight: 'bold', fontSize: 16 }}>
+                      {item.perfis?.nome ? item.perfis.nome.charAt(0).toUpperCase() : '?'}
+                    </Text>
                   </View>
-                )}
-              </TouchableOpacity>
-            )}
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>
+                      {item.perfis?.nome || 'Usuário'} 
+                      {item.isOwner && <Text style={{ fontSize: 12, color: '#ffc107' }}> (Dono)</Text>}
+                      {souEu && <Text style={{ fontSize: 12, color: corDestaque }}> (Você)</Text>}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#888' }}>{item.perfis?.email}</Text>
+                  </View>
+                  
+                  {/* SÓ MOSTRA OS BOTÕES SE EU TIVER PERMISSÃO, O ALVO NÃO FOR O DONO E NÃO FOR EU MESMO */}
+                  {!item.isOwner && !souEu && permissoesAtivas?.gerenciar && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="settings-outline" size={22} color="#007AFF" style={{ marginRight: 15 }} />
+                      <TouchableOpacity onPress={() => handleRemoverMembro(item.id, item.perfis?.nome)} style={{ padding: 5 }}>
+                        <Ionicons name="trash-outline" size={22} color="#d9534f" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              )
+            }}
           />
         )}
         {/* MODAL PADRONIZADO: REMOVER DA EQUIPE */}
@@ -2014,6 +2098,14 @@ const EquipeScreen = ({ navigation }) => {
 
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Avisos</Text>
+                  <Text style={{ fontSize: 12, color: '#888' }}>Permite apagar notificações da loja.</Text>
+                </View>
+                <Switch value={perms.gerenciar_avisos} onValueChange={(val) => setPerms({...perms, gerenciar_avisos: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar_avisos ? "#007AFF" : "#f4f3f4"} />
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Membros</Text>
                   <Text style={{ fontSize: 12, color: '#888' }}>Permite convidar e alterar acessos da equipe.</Text>
                 </View>
@@ -2043,6 +2135,7 @@ const EquipeScreen = ({ navigation }) => {
 // ----------------------
 const NotificacoesScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
+  const permissoesAtivas = useStore(state => state.permissoesAtivas);
   const [notificacoes, setNotificacoes] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -2144,10 +2237,12 @@ const NotificacoesScreen = ({ navigation }) => {
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {!selecionando ? (
             <>
-              <TouchableOpacity onPress={() => setSelecionando(true)} style={{ marginRight: 15 }}>
-                <Text style={{ color: '#007AFF', fontWeight: 'bold' }}>Selecionar</Text>
-              </TouchableOpacity>
-              {notificacoes.length > 0 && (
+              {permissoesAtivas?.gerenciar_avisos && (
+                <TouchableOpacity onPress={() => setSelecionando(true)} style={{ marginRight: 15 }}>
+                  <Text style={{ color: '#007AFF', fontWeight: 'bold' }}>Selecionar</Text>
+                </TouchableOpacity>
+              )}
+              {permissoesAtivas?.gerenciar_avisos && notificacoes.length > 0 && (
                 <TouchableOpacity onPress={() => {
                   setNotifFocada(null); // <-- Garante que a função saiba que é para apagar TODAS
                   setModalConfirmarVisible(true);
@@ -2293,13 +2388,17 @@ const NotificacoesScreen = ({ navigation }) => {
               <Ionicons name={notifFocada?.lida ? "mail-unread-outline" : "mail-open-outline"} size={22} color="#007AFF" style={{ marginRight: 15 }} />
               <Text style={{ fontSize: 16, color: '#333' }}>{notifFocada?.lida ? "Marcar como não lida" : "Marcar como lida"}</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => {
-              setModalAcaoUnicaVisible(false);
-              setTimeout(() => setModalConfirmarVisible(true), 150); // Abre o modal de confirmação
-            }} style={{ padding: 18, flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="trash-outline" size={22} color="#d9534f" style={{ marginRight: 15 }} />
-              <Text style={{ fontSize: 16, color: '#d9534f' }}>Apagar aviso</Text>
-            </TouchableOpacity>
+            
+            {/* SÓ MOSTRA SE TIVER PERMISSÃO */}
+            {permissoesAtivas?.gerenciar_avisos && (
+              <TouchableOpacity onPress={() => {
+                setModalAcaoUnicaVisible(false);
+                setTimeout(() => setModalConfirmarVisible(true), 150); // Abre o modal de confirmação
+              }} style={{ padding: 18, flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="trash-outline" size={22} color="#d9534f" style={{ marginRight: 15 }} />
+                <Text style={{ fontSize: 16, color: '#d9534f' }}>Apagar aviso</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </TouchableOpacity>
       </Modal>
@@ -2325,7 +2424,8 @@ const MovimentacoesScreen = ({ navigation }) => {
           produtos!inner(nome, loja_id)
         `)
         .eq('produtos.loja_id', lojaAtiva.id)
-        .order('criado_em', { ascending: false });
+        .order('criado_em', { ascending: false })
+        .limit(100); // <-- BASTA ADICIONAR ESTE LIMITE AQUI!
 
       if (data) setMovimentacoes(data);
       setLoading(false);
@@ -2355,6 +2455,10 @@ const MovimentacoesScreen = ({ navigation }) => {
           data={movimentacoes}
           keyExtractor={(item) => item.id.toString()}
           contentContainerStyle={{ padding: 15 }}
+          initialNumToRender={12}    
+          maxToRenderPerBatch={8}      
+          windowSize={5}           
+          removeClippedSubviews={true}
           renderItem={({ item }) => {
             const isEntrada = item.tipo === 'ENTRADA';
             const dataFormatada = new Date(item.criado_em).toLocaleDateString('pt-BR');
@@ -2392,32 +2496,103 @@ const MovimentacoesScreen = ({ navigation }) => {
 
 const MainAppDrawer = () => {
   const setLojas = useStore(state => state.setLojas);
-  // NOVO: Precisamos puxar a lojaAtiva aqui também para o cabeçalho saber o nome!
+  const setLojasMembro = useStore(state => state.setLojasMembro); // <-- Garantido que está aqui
   const lojaAtiva = useStore(state => state.lojaAtiva); 
   const setLojaAtiva = useStore(state => state.setLojaAtiva);
   const setIsFetchingLojas = useStore(state => state.setIsFetchingLojas);
+  const setPermissoesAtivas = useStore(state => state.setPermissoesAtivas);
 
+  // --- NOVO: VIGIA DE PERMISSÕES ---
   useEffect(() => {
-    const carregarLojas = async () => {
-      setIsFetchingLojas(true);
+    const fetchPermissoes = async () => {
+      if (!lojaAtiva) return;
+      
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data, error } = await supabase
-          .from('lojas')
-          .select('*')
-          .eq('dono_id', user.id)
-          .order('ordem', { ascending: true }); // <--- NOVO: Ordena pela coluna 'ordem'
-
+      
+      if (lojaAtiva.dono_id === user.id) {
+        setPermissoesAtivas({
+          quantidades: true, adicionar: true, editar: true, gerenciar: true, 
+          gerenciar_avisos: true // <-- 1. Adicionado para o dono
+        });
+      } else {
+        const { data } = await supabase
+          .from('equipe')
+          // 2. Adicionado na busca do banco:
+          .select('perm_editar_quantidades, perm_adicionar_produto, perm_editar_produto, perm_gerenciar_membros, perm_gerenciar_avisos') 
+          .eq('loja_id', lojaAtiva.id)
+          .eq('usuario_id', user.id)
+          .maybeSingle();
+          
         if (data) {
-          setLojas(data);
-          if (data.length > 0) {
-            setLojaAtiva(data[0]);
-          }
+          setPermissoesAtivas({
+            quantidades: data.perm_editar_quantidades,
+            adicionar: data.perm_adicionar_produto,
+            editar: data.perm_editar_produto,
+            gerenciar: data.perm_gerenciar_membros,
+            gerenciar_avisos: data.perm_gerenciar_avisos // <-- 3. Salvo no estado global
+          });
         }
       }
-      setIsFetchingLojas(false);
     };
-    carregarLojas();
+    fetchPermissoes();
+  }, [lojaAtiva]);
+
+  useEffect(() => {
+    const carregarTudo = async () => {
+      setIsFetchingLojas(true);
+      
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+        
+        if (user) {
+          // 1. Busca estoques que EU CRIEI
+          const { data: minhasLojas, error: errLojas } = await supabase
+            .from('lojas')
+            .select('*')
+            .eq('dono_id', user.id)
+            .order('ordem', { ascending: true });
+
+          if (errLojas) throw errLojas;
+
+          // 2. Busca IDs dos estoques onde SOU MEMBRO
+          const { data: participacoes, error: errEquipe } = await supabase
+            .from('equipe')
+            .select('loja_id')
+            .eq('usuario_id', user.id);
+
+          if (errEquipe) throw errEquipe;
+
+          let estoquesCompartilhados = [];
+          if (participacoes && participacoes.length > 0) {
+            const ids = participacoes.map(p => p.loja_id);
+            const { data: compartilhadas, error: errCompartilhadas } = await supabase
+              .from('lojas')
+              .select('*')
+              .in('id', ids);
+              
+            if (errCompartilhadas) throw errCompartilhadas;
+            estoquesCompartilhados = compartilhadas || [];
+          }
+
+          // 3. Salva no estado global
+          setLojas(minhasLojas || []);
+          setLojasMembro(estoquesCompartilhados);
+
+          // Define a loja ativa inicial
+          if (minhasLojas && minhasLojas.length > 0) setLojaAtiva(minhasLojas[0]);
+          else if (estoquesCompartilhados.length > 0) setLojaAtiva(estoquesCompartilhados[0]);
+          else setLojaAtiva(null);
+        }
+      } catch (error) {
+        console.log("Erro crítico ao carregar menu:", error);
+        Alert.alert("Erro de Sincronização", error.message);
+      } finally {
+        // O FINALLY garante que o carregamento vai desligar mesmo se tudo der errado!
+        setIsFetchingLojas(false);
+      }
+    };
+    carregarTudo();
   }, []);
 
   return (
@@ -2426,26 +2601,20 @@ const MainAppDrawer = () => {
       screenOptions={{
         headerTintColor: '#333',
         drawerActiveTintColor: '#007AFF',
-        headerTitleAlign: 'left', // NOVO: Garante que o título fique colado no menu lateral (três traços)
-        drawerItemStyle: {
-          borderRadius: 8,
-        }
+        headerTitleAlign: 'left',
+        drawerItemStyle: { borderRadius: 8 }
       }}
     >
       <Drawer.Screen 
         name="Home" 
         component={EmptyScreen} 
         options={{ 
-          // NOVO: Substitui o 'Stockly' pelo nome do Estoque (ou deixa vazio se não tiver nenhum)
           title: lojaAtiva ? lojaAtiva.nome : '', 
-          
-          // NOVO: Coloca a logo "STOCKLY" no canto direito da barra com a "fonte" do login!
           headerRight: () => (
             <Text style={{ marginRight: 20, fontSize: 18, fontWeight: 'bold', color: '#007AFF', letterSpacing: 2 }}>
               STOCKLY
             </Text>
           ),
-          
           drawerItemStyle: { display: 'none' } 
         }} 
       />
