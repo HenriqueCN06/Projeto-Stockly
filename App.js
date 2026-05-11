@@ -36,6 +36,10 @@ if (Platform.OS === 'web') {
 const useStore = create((set) => ({
   isLoggedIn: false,
   setAuthState: (status) => set({ isLoggedIn: status }),
+  unreadNotifCount: 0,
+  setUnreadNotifCount: (action) => set((state) => ({ 
+    unreadNotifCount: typeof action === 'function' ? action(state.unreadNotifCount) : action 
+  })),
   isFetchingLojas: true,
   setIsFetchingLojas: (status) => set({ isFetchingLojas: status }),
   
@@ -354,29 +358,52 @@ const EmptyScreen = ({ navigation }) => {
   const keyboardOffset = useRef(new Animated.Value(0)).current;
   const [editingStockId, setEditingStockId] = useState(null);
   const [tempStockValue, setTempStockValue] = useState('');
-  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const unreadNotifCount = useStore(state => state.unreadNotifCount);
+  const setUnreadNotifCount = useStore(state => state.setUnreadNotifCount);
   const [meuId, setMeuId] = useState(null);
 
-  // NOVO: Vigia quantas notificações não lidas existem
+  // =========================================================================
+  // CARREGAMENTO CENTRALIZADO (Produtos + Notificações num único take)
+  // =========================================================================
   useEffect(() => {
     if (lojaAtiva) {
-      const inicializar = async () => {
-        // Busca o ID do usuário logado uma única vez ao abrir a loja
+      const inicializarLoja = async () => {
+        // 1. Reseta a UI instantaneamente
+        scrollY.setValue(0);
+        setSearchQuery('');
+        
+        // 2. Liga a tela de loading de forma estável
+        setLoadingProducts(true);
+
+        // 3. Busca quem é o usuário (Rápido)
         const { data: { user } } = await supabase.auth.getUser();
         if (user) setMeuId(user.id);
-        
-        setLoadingProducts(true);
-        const { data, error } = await supabase
+
+        // 4. Busca os Produtos e a Contagem de Avisos SIMULTANEAMENTE (Performance Turbo)
+        const promiseNotificacoes = supabase
+          .from('notificacoes')
+          .select('*', { count: 'exact', head: true })
+          .eq('loja_id', lojaAtiva.id)
+          .eq('lida', false);
+
+        const promiseProdutos = supabase
           .from('produtos')
           .select('*')
           .eq('loja_id', lojaAtiva.id)
           .eq('ativo', true)
           .order('nome', { ascending: true });
 
-        if (data) setProducts(data);
+        const [resNotificacoes, resProdutos] = await Promise.all([promiseNotificacoes, promiseProdutos]);
+
+        // 5. Aplica os resultados na tela de uma só vez
+        if (resNotificacoes.count !== null) setUnreadNotifCount(resNotificacoes.count);
+        if (resProdutos.data) setProducts(resProdutos.data);
+
+        // 6. Desliga o loading (A tela surge pronta e completa)
         setLoadingProducts(false);
       };
-      inicializar();
+
+      inicializarLoja();
     }
   }, [lojaAtiva]);
 
@@ -518,42 +545,11 @@ const EmptyScreen = ({ navigation }) => {
 
   const abrirModal = () => {
     setModalVisible(true);
-    Animated.parallel([
-      Animated.timing(slideAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-      Animated.timing(fadeAnim, { toValue: 0.5, duration: 300, useNativeDriver: true })
-    ]).start();
   };
 
   const fecharModal = () => {
-    Animated.parallel([
-      Animated.timing(slideAnim, { toValue: Dimensions.get('window').height, duration: 300, useNativeDriver: true }),
-      Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true })
-    ]).start(() => setModalVisible(false));
+    setModalVisible(false);
   };
-
-  useEffect(() => {
-    if (lojaAtiva) {
-      
-      // --- NOVO: RESETA A TELA AO TROCAR DE ESTOQUE ---
-      scrollY.setValue(0); // Faz a barra de pesquisa descer novamente
-      setSearchQuery('');  // Limpa o texto pesquisado do estoque anterior
-      // ------------------------------------------------
-      
-      const carregarProdutos = async () => {
-        setLoadingProducts(true);
-        const { data, error } = await supabase
-          .from('produtos')
-          .select('*')
-          .eq('loja_id', lojaAtiva.id)
-          .eq('ativo', true) // <-- NOVO: Só busca os produtos que não foram "apagados"
-          .order('nome', { ascending: true });
-
-        if (data) setProducts(data);
-        setLoadingProducts(false);
-      };
-      carregarProdutos();
-    }
-  }, [lojaAtiva]);
 
   const handleSalvarProduto = async () => {
     if (!nome || !precoCusto || !precoVenda || !estoqueAtual) {
@@ -1050,10 +1046,7 @@ const EmptyScreen = ({ navigation }) => {
 
           {/* Botão de Notificações com Bolinha Vermelha */}
           <TouchableOpacity 
-            onPress={() => {
-              setUnreadNotifCount(0); 
-              navigation.navigate('Notificacoes');
-            }} 
+            onPress={() => navigation.navigate('Notificacoes')}
             style={{ width: 60, alignItems: 'center', justifyContent: 'center' }}
           >
             <View>
@@ -1075,22 +1068,17 @@ const EmptyScreen = ({ navigation }) => {
         </View>
 
         {/* MODAL FLUTUANTE: NOVO / EDITAR PRODUTO */}
-        <Modal visible={modalVisible} transparent={true} animationType="none"> 
-
-          {/* 1. FUNDO ESCURO (Isolado e Estático) */}
-          <View style={[StyleSheet.absoluteFillObject, { zIndex: 1 }]}>
-            <Animated.View style={{ flex: 1, backgroundColor: '#000', opacity: fadeAnim }} />
-          </View>
-
-          {/* 2. ÁREA CLICÁVEL INVISÍVEL (Fecha o modal ao clicar fora) */}
+        <Modal visible={modalVisible} transparent={true} animationType="fade"> 
+          
+          {/* Fundo escuro clicável para fechar */}
           <TouchableOpacity 
             activeOpacity={1} 
             onPress={fecharModal} 
-            style={{ flex: 1, justifyContent: 'center', alignItems: 'center', zIndex: 2 }}
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
           >
             
-            {/* 3. ESCUDO DA JANELA (Impede que o clique na janela feche o modal e abaixa o teclado) */}
-            <TouchableWithoutFeedback onPress={() => Keyboard.dismiss()}>
+            {/* TouchableWithoutFeedback impede que o clique dentro da janela feche o modal */}
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
               <Animated.View style={{ 
                 width: '90%', 
                 backgroundColor: '#fff',
@@ -1102,10 +1090,8 @@ const EmptyScreen = ({ navigation }) => {
                 shadowOffset: { width: 0, height: 5 },
                 shadowOpacity: 0.3,
                 shadowRadius: 10,
-                transform: [
-                  { translateY: slideAnim },
-                  { translateY: keyboardOffset } 
-                ]
+                // Mantém a funcionalidade de subir a janela quando o teclado aparece
+                transform: [{ translateY: keyboardOffset }] 
               }}>
                 
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -1169,7 +1155,6 @@ const EmptyScreen = ({ navigation }) => {
 
               </Animated.View>
             </TouchableWithoutFeedback>
-
           </TouchableOpacity>
         </Modal>
 
@@ -1801,12 +1786,27 @@ const EquipeScreen = ({ navigation }) => {
       }
 
       // 5. Adiciona os demais membros
+      // 5. Ordena e adiciona os demais membros
       if (equipeData) {
-        equipeData.forEach(membro => {
-          if (membro.usuario_id !== lojaAtiva.dono_id) {
-            const perfil = perfisData.find(p => p.id === membro.usuario_id);
-            listaFinal.push({ ...membro, perfis: perfil || { nome: 'Usuário Desconhecido', email: '' } });
-          }
+        // Filtra apenas quem não é o dono
+        let outrosMembros = equipeData.filter(m => m.usuario_id !== lojaAtiva.dono_id);
+        
+        // Ordena a lista: Gerentes primeiro, depois ordem alfabética
+        outrosMembros.sort((a, b) => {
+          // 1º Critério: Hierarquia (Quem gerencia vem antes)
+          if (a.perm_gerenciar_membros && !b.perm_gerenciar_membros) return -1;
+          if (!a.perm_gerenciar_membros && b.perm_gerenciar_membros) return 1;
+          
+          // 2º Critério: Desempate por Ordem Alfabética
+          const perfilA = perfisData.find(p => p.id === a.usuario_id)?.nome || '';
+          const perfilB = perfisData.find(p => p.id === b.usuario_id)?.nome || '';
+          return perfilA.localeCompare(perfilB);
+        });
+
+        // Adiciona a lista ordenada na lista final da tela
+        outrosMembros.forEach(membro => {
+          const perfil = perfisData.find(p => p.id === membro.usuario_id);
+          listaFinal.push({ ...membro, perfis: perfil || { nome: 'Usuário Desconhecido', email: '' } });
         });
       }
 
@@ -1956,19 +1956,66 @@ const EquipeScreen = ({ navigation }) => {
 
       {/* SÓ MOSTRA SE TIVER PERMISSÃO */}
       {permissoesAtivas?.gerenciar && (
-        <View style={{ padding: 20, backgroundColor: '#fff', marginBottom: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
-          <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333', marginBottom: 10 }}>Adicionar Membro</Text>
+        <View style={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 5, backgroundColor: 'transparent' }}>
+          <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#888', marginBottom: 15, textTransform: 'uppercase' }}>Adicionar Membro</Text>
+          
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <TextInput placeholder="E-mail do usuário..." placeholderTextColor="#999" value={emailConvite} onChangeText={setEmailConvite} style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, backgroundColor: '#fafafa', color: '#333', marginRight: 10 }} keyboardType="email-address" autoCapitalize="none" />
-            <TouchableOpacity onPress={handleConvidar} disabled={loading || !emailConvite} style={{ backgroundColor: (loading || !emailConvite) ? '#a0cbfc' : '#007AFF', padding: 12, borderRadius: 8, width: 60, alignItems: 'center' }}>
+            
+            {/* Input no mesmo estilo da barra de pesquisa de produtos */}
+            <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
+              <Ionicons name="mail" size={20} color="#64748b" />
+              <TextInput 
+                placeholder="E-mail do usuário..." 
+                placeholderTextColor="#94a3b8" 
+                value={emailConvite} 
+                onChangeText={setEmailConvite} 
+                style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }} 
+                keyboardType="email-address" 
+                autoCapitalize="none" 
+              />
+              {/* Botão de limpar (X) que aparece quando há texto */}
+              {emailConvite.length > 0 && (
+                <TouchableOpacity onPress={() => setEmailConvite('')}>
+                  <Ionicons name="close-circle" size={20} color="#94a3b8" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Botão de Enviar no formato quadrado para combinar */}
+            <TouchableOpacity 
+              onPress={handleConvidar} 
+              disabled={loading || !emailConvite} 
+              style={{ 
+                marginLeft: 10, 
+                backgroundColor: (loading || !emailConvite) ? '#a0cbfc' : '#007AFF', 
+                width: 48, 
+                height: 48, 
+                borderRadius: 8, 
+                justifyContent: 'center', 
+                alignItems: 'center' 
+              }}
+            >
               {loading ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={20} color="#fff" />}
             </TouchableOpacity>
           </View>
         </View>
       )}
 
-      <View style={{ flex: 1, paddingHorizontal: 20 }}>
-        <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#888', marginVertical: 15, textTransform: 'uppercase' }}>Membros Atuais</Text>
+      {/* Removemos o paddingHorizontal da View principal para a linha poder esticar mais */}
+      <View style={{ flex: 1 }}>
+        
+        {/* Container fixo do Título + Linha */}
+        <View style={{ backgroundColor: '#f5f5f5', zIndex: 1, paddingTop: 15 }}>
+          <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#888', marginHorizontal: 20, marginBottom: 10, textTransform: 'uppercase' }}>
+            Membros Atuais
+          </Text>
+          
+          {/* A Linha: Usamos margin 10 (os cards têm 20), assim ela fica mais larga que eles, mas não encosta na tela */}
+          <View style={{ height: 1, backgroundColor: '#a1a1aa', marginHorizontal: 10 }} />
+        </View>
+
+        {/* Devolvemos o paddingHorizontal 20 apenas para a área da lista */}
+        <View style={{ flex: 1, paddingHorizontal: 20 }}>
         
         {loadingList ? (
           <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
@@ -1982,25 +2029,32 @@ const EquipeScreen = ({ navigation }) => {
             data={equipe}
             keyExtractor={(item) => item.id.toString()}
             showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingTop: 10, paddingBottom: 20 }}
             renderItem={({ item }) => {
               const souEu = item.usuario_id === meuId; 
+              const souDono = lojaAtiva?.dono_id === meuId;
               
-              // 1. Define as cores base (Amarelo para Dono, Azul para Membro)
-              const corDestaque = item.isOwner ? '#ffc107' : '#007AFF';
-              const fundoDestaque = item.isOwner ? '#fff3cd' : '#f0f7ff';
+              // 1. Define se o item da lista é um Gerente
+              const isGerente = !item.isOwner && item.perm_gerenciar_membros;
+
+              // 2. Cores dinâmicas (Amarelo = Dono, Verde = Gerente, Azul = Membro Comum)
+              const corDestaque = item.isOwner ? '#ffc107' : (isGerente ? '#28a745' : '#007AFF');
+              const fundoDestaque = item.isOwner ? '#fff3cd' : (isGerente ? '#e8f5e9' : '#f0f7ff');
               
-              // 2. NOVO: Lógica inteligente de contraste do círculo!
-              // Se for "Eu", o círculo fica com a cor forte. Se não for, fica com o fundo claro.
-              const fundoIcone = souEu ? corDestaque : (item.isOwner ? '#fff3cd' : '#e6f2ff');
-              // Se for "Eu", a letra fica branca. Se não for, a letra fica com a cor forte.
+              // 3. Lógica do Círculo da Foto
+              // Se for "Eu", o fundo é a cor forte. Se não, é o tom pastel.
+              const fundoIcone = souEu ? corDestaque : (item.isOwner ? '#fff3cd' : (isGerente ? '#e8f5e9' : '#e6f2ff'));
               const corTextoIcone = souEu ? '#fff' : corDestaque;
+
+              // Trava de hierarquia para os botões de edição
+              const possoEditar = permissoesAtivas?.gerenciar && !item.isOwner && !souEu && (souDono || !item.perm_gerenciar_membros);
 
               return (
                 <TouchableOpacity 
-                  activeOpacity={(item.isOwner || souEu || !permissoesAtivas?.gerenciar) ? 1 : 0.6}
-                  onPress={() => !item.isOwner && !souEu && permissoesAtivas?.gerenciar && abrirModalPermissoes(item)}
+                  activeOpacity={possoEditar ? 0.6 : 1}
+                  onPress={() => possoEditar && abrirModalPermissoes(item)}
                   style={{ 
-                    backgroundColor: souEu ? fundoDestaque : '#fff', 
+                    backgroundColor: souEu ? fundoDestaque : '#fff', // Fica verde se "Você" for gerente
                     padding: 15, 
                     borderRadius: 10, 
                     marginBottom: 10, 
@@ -2011,7 +2065,7 @@ const EquipeScreen = ({ navigation }) => {
                     shadowOpacity: 0.05, 
                     elevation: 1, 
                     borderWidth: 1, 
-                    borderColor: item.isOwner ? '#ffc107' : (souEu ? '#007AFF' : '#eee') 
+                    borderColor: item.isOwner ? '#ffc107' : (souEu ? corDestaque : '#eee') 
                   }}
                 >
                   <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: fundoIcone, justifyContent: 'center', alignItems: 'center', marginRight: 15 }}>
@@ -2024,13 +2078,16 @@ const EquipeScreen = ({ navigation }) => {
                     <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>
                       {item.perfis?.nome || 'Usuário'} 
                       {item.isOwner && <Text style={{ fontSize: 12, color: '#ffc107' }}> (Dono)</Text>}
+                      
+                      {/* Rótulo de Gerente: Agora aparece para todos, inclusive para "Você" */}
+                      {isGerente && <Text style={{ fontSize: 12, color: '#28a745' }}> (Gerente)</Text>}
+                      
                       {souEu && <Text style={{ fontSize: 12, color: corDestaque }}> (Você)</Text>}
                     </Text>
                     <Text style={{ fontSize: 12, color: '#888' }}>{item.perfis?.email}</Text>
                   </View>
                   
-                  {/* SÓ MOSTRA OS BOTÕES SE EU TIVER PERMISSÃO, O ALVO NÃO FOR O DONO E NÃO FOR EU MESMO */}
-                  {!item.isOwner && !souEu && permissoesAtivas?.gerenciar && (
+                  {possoEditar && (
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <Ionicons name="settings-outline" size={22} color="#007AFF" style={{ marginRight: 15 }} />
                       <TouchableOpacity onPress={() => handleRemoverMembro(item.id, item.perfis?.nome)} style={{ padding: 5 }}>
@@ -2071,75 +2128,85 @@ const EquipeScreen = ({ navigation }) => {
 
       {/* --- MODAL DE PERMISSÕES --- */}
       <Modal visible={modalPermissoesVisible} transparent={true} animationType="fade">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 15, width: '90%', padding: 25, shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 10 }}>
-            
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <View>
-                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>Editar Permissões</Text>
-                <Text style={{ fontSize: 14, color: '#888' }}>{membroSelecionado?.perfis?.nome}</Text>
+        {/* Transformamos o fundo escuro em um botão que fecha o modal */}
+        <TouchableOpacity 
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+          activeOpacity={1}
+          onPress={() => setModalPermissoesVisible(false)}
+        >
+          {/* Protegemos a caixa branca para não fechar se clicar dentro dela */}
+          <TouchableWithoutFeedback>
+            <View style={{ backgroundColor: '#fff', borderRadius: 15, width: '90%', padding: 25, shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 10 }}>
+              
+              {/* HEADER DO MODAL CORRIGIDO */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <View>
+                  <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>Editar Permissões</Text>
+                  <Text style={{ fontSize: 14, color: '#888' }}>{membroSelecionado?.perfis?.nome}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setModalPermissoesVisible(false)}>
+                  <Ionicons name="close" size={28} color="#999" />
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity onPress={() => setModalPermissoesVisible(false)}>
-                <Ionicons name="close" size={28} color="#999" />
-              </TouchableOpacity>
+
+              {/* Configuração dos Switches */}
+              <View style={{ marginBottom: 25 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Editar Quantidades</Text>
+                    <Text style={{ fontSize: 12, color: '#888' }}>Permite usar os botões + e - no estoque.</Text>
+                  </View>
+                  <Switch value={perms.quantidades} onValueChange={(val) => setPerms({...perms, quantidades: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.quantidades ? "#007AFF" : "#f4f3f4"} />
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Adicionar Produtos</Text>
+                    <Text style={{ fontSize: 12, color: '#888' }}>Permite criar novos produtos no sistema.</Text>
+                  </View>
+                  <Switch value={perms.adicionar} onValueChange={(val) => setPerms({...perms, adicionar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.adicionar ? "#007AFF" : "#f4f3f4"} />
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Editar Produtos</Text>
+                    <Text style={{ fontSize: 12, color: '#888' }}>Permite alterar preços, nomes e alertas.</Text>
+                  </View>
+                  <Switch value={perms.editar} onValueChange={(val) => setPerms({...perms, editar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.editar ? "#007AFF" : "#f4f3f4"} />
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Avisos</Text>
+                    <Text style={{ fontSize: 12, color: '#888' }}>Permite apagar notificações da loja.</Text>
+                  </View>
+                  <Switch value={perms.gerenciar_avisos} onValueChange={(val) => setPerms({...perms, gerenciar_avisos: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar_avisos ? "#007AFF" : "#f4f3f4"} />
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Membros</Text>
+                    <Text style={{ fontSize: 12, color: '#888' }}>Permite convidar e alterar acessos da equipe.</Text>
+                  </View>
+                  <Switch value={perms.gerenciar} onValueChange={(val) => setPerms({...perms, gerenciar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar ? "#007AFF" : "#f4f3f4"} />
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <TouchableOpacity onPress={() => setModalPermissoesVisible(false)} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} disabled={loadingPerms}>
+                  <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={salvarPermissoes} disabled={loadingPerms} style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}>
+                  <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loadingPerms ? "Salvando..." : "Salvar"}</Text>
+                </TouchableOpacity>
+              </View>
+
             </View>
-
-            {/* Configuração dos Switches */}
-            <View style={{ marginBottom: 25 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Editar Quantidades</Text>
-                  <Text style={{ fontSize: 12, color: '#888' }}>Permite usar os botões + e - no estoque.</Text>
-                </View>
-                <Switch value={perms.quantidades} onValueChange={(val) => setPerms({...perms, quantidades: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.quantidades ? "#007AFF" : "#f4f3f4"} />
-              </View>
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Adicionar Produtos</Text>
-                  <Text style={{ fontSize: 12, color: '#888' }}>Permite criar novos produtos no sistema.</Text>
-                </View>
-                <Switch value={perms.adicionar} onValueChange={(val) => setPerms({...perms, adicionar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.adicionar ? "#007AFF" : "#f4f3f4"} />
-              </View>
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Editar Produtos</Text>
-                  <Text style={{ fontSize: 12, color: '#888' }}>Permite alterar preços, nomes e alertas.</Text>
-                </View>
-                <Switch value={perms.editar} onValueChange={(val) => setPerms({...perms, editar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.editar ? "#007AFF" : "#f4f3f4"} />
-              </View>
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Avisos</Text>
-                  <Text style={{ fontSize: 12, color: '#888' }}>Permite apagar notificações da loja.</Text>
-                </View>
-                <Switch value={perms.gerenciar_avisos} onValueChange={(val) => setPerms({...perms, gerenciar_avisos: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar_avisos ? "#007AFF" : "#f4f3f4"} />
-              </View>
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Membros</Text>
-                  <Text style={{ fontSize: 12, color: '#888' }}>Permite convidar e alterar acessos da equipe.</Text>
-                </View>
-                <Switch value={perms.gerenciar} onValueChange={(val) => setPerms({...perms, gerenciar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar ? "#007AFF" : "#f4f3f4"} />
-              </View>
-            </View>
-
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-              <TouchableOpacity onPress={() => setModalPermissoesVisible(false)} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }} disabled={loadingPerms}>
-                <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={salvarPermissoes} disabled={loadingPerms} style={{ flex: 1, backgroundColor: '#007AFF', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}>
-                <Text style={{ color: '#fff', fontWeight: 'bold' }}>{loadingPerms ? "Salvando..." : "Salvar"}</Text>
-              </TouchableOpacity>
-            </View>
-
-          </View>
-        </View>
+          </TouchableWithoutFeedback>
+        </TouchableOpacity>
       </Modal>
 
+    </View>
     </View>
   );
 };
@@ -2150,6 +2217,7 @@ const EquipeScreen = ({ navigation }) => {
 const NotificacoesScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
   const permissoesAtivas = useStore(state => state.permissoesAtivas);
+  const setUnreadNotifCount = useStore(state => state.setUnreadNotifCount);
   const [notificacoes, setNotificacoes] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -2172,10 +2240,15 @@ const NotificacoesScreen = ({ navigation }) => {
 
     if (data) {
       setNotificacoes(data);
-      // Marca como lidas apenas as que não estão em modo de seleção
       const naoLidas = data.filter(n => !n.lida).map(n => n.id);
-      if (naoLidas.length > 0 && !selecionando) {
+      
+      // Se tem permissão, ele lê tudo. A bolinha zera.
+      if (permissoesAtivas?.gerenciar_avisos && naoLidas.length > 0 && !selecionando) {
         await supabase.from('notificacoes').update({ lida: true }).in('id', naoLidas);
+        setUnreadNotifCount(0); // <-- ADICIONE
+      } else {
+        // Se não tem permissão, a bolinha reflete os não lidos da tela
+        setUnreadNotifCount(naoLidas.length); // <-- ADICIONE
       }
     }
     setLoading(false);
@@ -2197,21 +2270,22 @@ const NotificacoesScreen = ({ navigation }) => {
   // Funções de Ação (Banco de Dados)
   const handleApagarSelecionadas = async () => {
     try {
+      let novasNotificacoes = []; // <-- Criamos a variável aqui
+
       if (selecionando) {
-        // CENÁRIO 1: Apagar as selecionadas nas caixinhas
         await supabase.from('notificacoes').delete().in('id', selecionados);
-        setNotificacoes(notificacoes.filter(n => !selecionados.includes(n.id)));
+        novasNotificacoes = notificacoes.filter(n => !selecionados.includes(n.id));
       } else if (notifFocada) {
-        // CENÁRIO 2: Apagar uma única (ao clicar nela na lista)
         await supabase.from('notificacoes').delete().eq('id', notifFocada.id);
-        setNotificacoes(notificacoes.filter(n => n.id !== notifFocada.id));
+        novasNotificacoes = notificacoes.filter(n => n.id !== notifFocada.id);
       } else {
-        // CENÁRIO 3: Apagar TODAS (Lixeira do topo sem estar no modo selecionar)
         await supabase.from('notificacoes').delete().eq('loja_id', lojaAtiva.id);
-        setNotificacoes([]);
+        novasNotificacoes = [];
       }
 
-      // Limpa os estados e fecha as janelas
+      setNotificacoes(novasNotificacoes);
+      setUnreadNotifCount(novasNotificacoes.filter(n => !n.lida).length);
+
       sairModoSelecao();
       setNotifFocada(null);
       setModalConfirmarVisible(false);
@@ -2225,7 +2299,13 @@ const NotificacoesScreen = ({ navigation }) => {
   const handleMarcarComoLida = async (lidaStatus) => {
     const ids = selecionando ? selecionados : [notifFocada.id];
     await supabase.from('notificacoes').update({ lida: lidaStatus }).in('id', ids);
-    setNotificacoes(notificacoes.map(n => ids.includes(n.id) ? { ...n, lida: lidaStatus } : n));
+    
+    // <-- Criamos a variável corretamente antes de usar
+    const novasNotificacoes = notificacoes.map(n => ids.includes(n.id) ? { ...n, lida: lidaStatus } : n);
+    
+    setNotificacoes(novasNotificacoes);
+    setUnreadNotifCount(novasNotificacoes.filter(n => !n.lida).length);
+    
     sairModoSelecao();
     setModalAcaoUnicaVisible(false);
   };
@@ -2332,12 +2412,12 @@ const NotificacoesScreen = ({ navigation }) => {
                 activeOpacity={0.7}
                 onPress={() => {
                   if (selecionando) toggleSelecao(item.id);
-                  else {
+                  else if (permissoesAtivas?.gerenciar_avisos) { // <-- TRAVA AQUI
                     setNotifFocada(item);
                     setModalAcaoUnicaVisible(true);
                   }
                 }}
-                style={{ 
+                style={{
                   backgroundColor: isSelected ? '#e6f2ff' : (item.lida ? '#fff' : '#f0f7ff'), 
                   padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', 
                   borderWidth: 1, borderColor: isSelected ? '#007AFF' : (item.lida ? '#eee' : '#b3d4ff'),
@@ -2501,7 +2581,7 @@ const MovimentacoesScreen = ({ navigation }) => {
                   <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.produtos.nome}</Text>
                   <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{dataFormatada} às {horaFormatada}</Text>
                   <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>Motivo: {item.observacao}</Text>
-                  <Text style={{ fontSize: 12, color: '#007AFF', fontWeight: 'bold', marginTop: 2 }}>
+                  <Text style={{ fontSize: 12, color: '#666', fontWeight: 'bold', marginTop: 2 }}>
                     Por: {item.perfis?.[0]?.nome || item.perfis?.nome || 'Sistema'}
                   </Text>
                 </View>
