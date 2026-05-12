@@ -54,6 +54,8 @@ const useStore = create((set) => ({
   setLojasMembro: (lojas) => set({ lojasMembro: lojas }), 
   setLojaAtiva: (loja) => set({ lojaAtiva: loja }),
   setPermissoesAtivas: (perms) => set({ permissoesAtivas: perms }),
+  produtoParaEditarId: null,
+  setProdutoParaEditarId: (id) => set({ produtoParaEditarId: id }),
 
   products: [],
   setProducts: (products) => set({ products }),
@@ -437,6 +439,19 @@ const EmptyScreen = ({ navigation }) => {
       hideSubscription.remove();
     };
   }, []);
+
+  const { produtoParaEditarId, setProdutoParaEditarId } = useStore();
+
+  useEffect(() => {
+    // Se existir um ID vindo da ponte e a lista de produtos já estiver carregada
+    if (produtoParaEditarId && products.length > 0) {
+      const prod = products.find(p => p.id === produtoParaEditarId);
+      if (prod) {
+        abrirModalEdicao(prod); // Abre o modal de edição corretamente
+        setProdutoParaEditarId(null); // Limpa a ponte para não abrir de novo sozinho
+      }
+    }
+  }, [produtoParaEditarId, products]);
 
   const showBanner = (message, type) => {
     setNotification({ visible: true, message, type });
@@ -2226,6 +2241,7 @@ const NotificacoesScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
   const permissoesAtivas = useStore(state => state.permissoesAtivas);
   const setUnreadNotifCount = useStore(state => state.setUnreadNotifCount);
+  const { setProdutoParaEditarId } = useStore();
 
   // --- ESTADOS: AVISOS (Originais) ---
   const [notificacoes, setNotificacoes] = useState([]);
@@ -2244,6 +2260,14 @@ const NotificacoesScreen = ({ navigation }) => {
   const [dataLimite, setDataLimite] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [criandoLembrete, setCriandoLembrete] = useState(false);
+  const [lembreteEditandoData, setLembreteEditandoData] = useState(null);
+  const [produtoSelecionado, setProdutoSelecionado] = useState(null);
+  const [modalProdutosVisible, setModalProdutosVisible] = useState(false);
+  const [listaProdutos, setListaProdutos] = useState([]);
+  const [modalAjusteVisible, setModalAjusteVisible] = useState(false);
+  const [produtoParaAjuste, setProdutoParaAjuste] = useState(null);
+  const [novaQuantidade, setNovaQuantidade] = useState(0);
+  const [atualizandoEstoque, setAtualizandoEstoque] = useState(false);
 
   // === LÓGICA DE AVISOS ===
   const carregarNotificacoes = async () => {
@@ -2323,8 +2347,18 @@ const NotificacoesScreen = ({ navigation }) => {
       .order('created_at', { ascending: false });
 
     if (lembretesData) {
-      // Busca os nomes dos responsáveis (se houver) para exibir na tarefa
-      const ids = [...new Set(lembretesData.map(l => l.responsavel_id).filter(id => id))];
+      // Captura apenas os IDs de quem concluiu (A linha que tinha sumido!)
+      const ids = [...new Set(lembretesData.map(l => l.concluido_por_id).filter(id => id))];
+
+      // Captura apenas os IDs dos produtos vinculados
+      const prodIds = [...new Set(lembretesData.map(l => l.produto_id).filter(id => id))];
+      
+      let produtosMap = {};
+      if (prodIds.length > 0) {
+        const { data: prods } = await supabase.from('produtos').select('id, nome').in('id', prodIds);
+        if (prods) prods.forEach(p => { produtosMap[p.id] = p.nome });
+      }
+
       let perfisMap = {};
       if (ids.length > 0) {
         const { data: perfis } = await supabase.from('perfis').select('id, nome').in('id', ids);
@@ -2333,11 +2367,19 @@ const NotificacoesScreen = ({ navigation }) => {
       
       const lembretesComNomes = lembretesData.map(l => ({
         ...l,
-        nome_responsavel: l.responsavel_id ? perfisMap[l.responsavel_id] : null
+        nome_concluido_por: l.concluido_por_id ? perfisMap[l.concluido_por_id] : null,
+        nome_produto: l.produto_id ? produtosMap[l.produto_id] : null
       }));
       setLembretes(lembretesComNomes);
     }
     setLoadingLembretes(false);
+  };
+
+  // AGORA SIM, a função de abrir o modal no lugar certo (fora do carregarLembretes)
+  const abrirModalProdutos = async () => {
+    const { data } = await supabase.from('produtos').select('id, nome').eq('loja_id', lojaAtiva.id).order('nome');
+    if (data) setListaProdutos(data);
+    setModalProdutosVisible(true);
   };
 
   const handleCriarLembreteRapido = async () => {
@@ -2349,12 +2391,14 @@ const NotificacoesScreen = ({ navigation }) => {
       loja_id: lojaAtiva.id,
       texto: novoLembrete.trim(),
       criador_id: user.id,
-      data_limite: dataLimite ? dataLimite.toISOString() : null // <-- Envia a data se existir
+      data_limite: dataLimite ? dataLimite.toISOString() : null,
+      produto_id: produtoSelecionado ? produtoSelecionado.id : null // <-- Envia o vínculo!
     }]);
 
     if (!error) {
       setNovoLembrete('');
-      setDataLimite(null); // <-- Limpa a data após criar
+      setDataLimite(null);
+      setProdutoSelecionado(null); // <-- Limpa após criar
       carregarLembretes();
     } else {
       console.log("ERRO AO CRIAR TAREFA:", error);
@@ -2363,21 +2407,78 @@ const NotificacoesScreen = ({ navigation }) => {
     setCriandoLembrete(false);
   };
 
-  // Função para capturar a data escolhida no calendário
-  const onChangeDate = (event, selectedDate) => {
+  const onChangeDate = async (event, selectedDate) => {
     setShowDatePicker(false);
-    if (selectedDate) setDataLimite(selectedDate);
+    
+    if (!selectedDate) return;
+
+    // Cenário A: Editando a data de uma tarefa que já existe
+    if (lembreteEditandoData) {
+      const tarefaId = lembreteEditandoData.id;
+      
+      // Atualiza na tela (Visual)
+      setLembretes(lembretes.map(l => l.id === tarefaId ? { ...l, data_limite: selectedDate.toISOString() } : l));
+      
+      // Salva no Supabase
+      const { error } = await supabase
+        .from('lembretes')
+        .update({ data_limite: selectedDate.toISOString() })
+        .eq('id', tarefaId);
+
+      if (error) {
+        Alert.alert("Erro", "Não foi possível atualizar o prazo.");
+        carregarLembretes(); // Reverte para o estado anterior em caso de erro
+      }
+      
+      setLembreteEditandoData(null); // Limpa o estado de edição
+    } 
+    // Cenário B: Definindo a data para um NOVO lembrete (o que já fazíamos)
+    else {
+      setDataLimite(selectedDate);
+    }
+  };
+
+  // Função para calcular a cor da borda automaticamente baseada na data limite
+  const getCorPrioridadeAutomatica = (dataLimite, concluido) => {
+    if (concluido) return '#eee'; // Concluído fica neutro
+    if (!dataLimite) return '#e2e8f0'; // Sem prazo fica com a cor padrão do card
+
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0); // Zera as horas para comparar apenas os dias
+    
+    const prazo = new Date(dataLimite);
+    prazo.setHours(0, 0, 0, 0);
+
+    const diffTime = prazo - hoje;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); // Converte milissegundos para dias
+
+    if (diffDays < 0) return '#d9534f'; // Vermelho: Atrasado
+    if (diffDays === 0) return '#ff3b30'; // Vermelho Forte: É para hoje!
+    if (diffDays <= 2) return '#ffc107'; // Amarelo: Faltam 1 ou 2 dias
+    return '#4CAF50'; // Verde: Faltam 3 dias ou mais
   };
 
   const toggleConcluido = async (tarefa) => {
-    // Atualiza a tela instantaneamente para dar sensação de velocidade
+    const { data: { user } } = await supabase.auth.getUser();
     const novoStatus = !tarefa.concluido;
-    setLembretes(lembretes.map(l => l.id === tarefa.id ? { ...l, concluido: novoStatus } : l));
     
-    // Envia para o banco
-    await supabase.from('lembretes').update({ concluido: novoStatus }).eq('id', tarefa.id);
+    // Se estiver a marcar como concluído, guarda o seu ID. Se estiver a desmarcar, limpa o ID.
+    const concluidoPor = novoStatus ? user.id : null;
+
+    // Atualiza o estado local para ser instantâneo
+    setLembretes(lembretes.map(l => l.id === tarefa.id ? { 
+      ...l, 
+      concluido: novoStatus, 
+      concluido_por_id: concluidoPor 
+    } : l));
     
-    // Recarrega para que as tarefas concluídas desçam para o final da lista
+    // Envia para o banco de dados
+    await supabase.from('lembretes').update({ 
+      concluido: novoStatus,
+      concluido_por_id: concluidoPor
+    }).eq('id', tarefa.id);
+    
+    // Recarrega para puxar os nomes atualizados dos perfis
     carregarLembretes();
   };
 
@@ -2391,6 +2492,41 @@ const NotificacoesScreen = ({ navigation }) => {
     carregarLembretes();
   }, [lojaAtiva]);
 
+  const abrirAjusteRapido = async (produtoId) => {
+    // Busca os dados frescos do produto no banco
+    const { data, error } = await supabase
+      .from('produtos')
+      .select('id, nome, estoque_atual') // <-- CORRIGIDO AQUI
+      .eq('id', produtoId)
+      .single();
+
+    if (error) console.log("Erro ao buscar produto:", error); // Adicionado para avisar se der erro!
+
+    if (data) {
+      setProdutoParaAjuste(data);
+      setNovaQuantidade(data.estoque_atual || 0); // <-- CORRIGIDO AQUI TAMBÉM
+      setModalAjusteVisible(true);
+    }
+  };
+
+  const salvarAjusteEstoque = async () => {
+    setAtualizandoEstoque(true);
+    const { error } = await supabase
+      .from('produtos')
+      .update({ estoque_atual: novaQuantidade }) // <-- NOME CORRETO DA COLUNA!
+      .eq('id', produtoParaAjuste.id);
+
+    if (!error) {
+      Alert.alert("Sucesso", "Estoque atualizado!");
+      setModalAjusteVisible(false);
+      // Opcional: recarregar lembretes se quiser atualizar o nome/info
+      carregarLembretes();
+    } else {
+      Alert.alert("Erro", "Não foi possível atualizar o estoque.");
+    }
+    setAtualizandoEstoque(false);
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
       
@@ -2401,7 +2537,7 @@ const NotificacoesScreen = ({ navigation }) => {
             <Ionicons name={selecionando ? "close" : "arrow-back"} size={28} color="#333" />
           </TouchableOpacity>
           <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>
-            {selecionando ? `${selecionados.length} selecionados` : (abaAtiva === 'avisos' ? "Avisos" : "Afazeres")}
+            {selecionando ? `${selecionados.length} selecionados` : (abaAtiva === 'avisos' ? "Avisos" : "Tarefas")}
           </Text>
         </View>
 
@@ -2505,7 +2641,7 @@ const NotificacoesScreen = ({ navigation }) => {
         <View style={{ flex: 1 }}>
           
           {/* BARRA DE CRIAR RÁPIDA */}
-          <View style={{ paddingHorizontal: 20, paddingTop: 15, paddingBottom: 5 }}>
+          <View style={{ paddingHorizontal: 20, paddingTop: 15, paddingBottom: 5, zIndex: 10 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
                 <Ionicons name="add-circle-outline" size={22} color="#64748b" />
@@ -2517,7 +2653,12 @@ const NotificacoesScreen = ({ navigation }) => {
                   style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }}
                   onSubmitEditing={handleCriarLembreteRapido}
                 />
-                
+
+                {/* BOTÃO DE VINCULAR PRODUTO */}
+                <TouchableOpacity onPress={abrirModalProdutos} style={{ paddingHorizontal: 5 }}>
+                  <Ionicons name="cube" size={22} color={produtoSelecionado ? "#007AFF" : "#94a3b8"} />
+                </TouchableOpacity>
+
                 {/* BOTÃO DO CALENDÁRIO */}
                 <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ paddingHorizontal: 5 }}>
                   <Ionicons name="calendar" size={22} color={dataLimite ? "#007AFF" : "#94a3b8"} />
@@ -2533,10 +2674,16 @@ const NotificacoesScreen = ({ navigation }) => {
               </TouchableOpacity>
             </View>
             
-            {/* TEXTO AVISANDO A DATA ESCOLHIDA ANTES DE ENVIAR */}
+            {/* TEXTO AVISANDO O PRODUTO E A DATA ESCOLHIDA ANTES DE ENVIAR */}
+            {produtoSelecionado && (
+              <Text style={{ color: '#007AFF', fontSize: 12, marginTop: 5, marginLeft: 5, fontWeight: 'bold' }}>
+                <Ionicons name="cube" size={12} /> Produto: {produtoSelecionado.nome}
+                <Text onPress={() => setProdutoSelecionado(null)} style={{ color: '#d9534f' }}> (Remover)</Text>
+              </Text>
+            )}
             {dataLimite && (
               <Text style={{ color: '#007AFF', fontSize: 12, marginTop: 5, marginLeft: 5, fontWeight: 'bold' }}>
-                Prazo: {dataLimite.toLocaleDateString('pt-BR')} 
+                <Ionicons name="calendar" size={12} /> Prazo: {dataLimite.toLocaleDateString('pt-BR')} 
                 <Text onPress={() => setDataLimite(null)} style={{ color: '#d9534f' }}> (Remover)</Text>
               </Text>
             )}
@@ -2550,6 +2697,20 @@ const NotificacoesScreen = ({ navigation }) => {
                 onChange={onChangeDate}
               />
             )}
+
+            {/* EFEITO DEGRADÊ (FUMAÇA) */}
+            <LinearGradient
+              colors={['#f5f5f5', 'rgba(245, 245, 245, 0)']}
+              style={{ 
+                position: 'absolute', 
+                left: 0, 
+                right: 0, 
+                bottom: -20, 
+                height: 20, 
+                zIndex: 10 
+              }}
+              pointerEvents="none"
+            />
           </View>
 
           {/* LISTA DE TAREFAS */}
@@ -2567,7 +2728,7 @@ const NotificacoesScreen = ({ navigation }) => {
                keyExtractor={item => item.id.toString()}
                contentContainerStyle={{ padding: 15 }}
                renderItem={({ item }) => (
-                  <View style={{ backgroundColor: item.concluido ? '#f8f9fa' : '#fff', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: item.concluido ? '#eee' : '#e2e8f0', elevation: item.concluido ? 0 : 1 }}>
+                  <View style={{ backgroundColor: item.concluido ? '#f8f9fa' : '#fff', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: item.concluido ? '#eee' : '#e2e8f0', elevation: item.concluido ? 0 : 1, borderLeftWidth: item.concluido ? 1 : 4, borderLeftColor: getCorPrioridadeAutomatica(item.data_limite, item.concluido) }}>
                      
                      <TouchableOpacity onPress={() => toggleConcluido(item)} style={{ marginRight: 15 }}>
                         <Ionicons name={item.concluido ? "checkmark-circle" : "ellipse-outline"} size={28} color={item.concluido ? "#4CAF50" : "#ccc"} />
@@ -2576,16 +2737,45 @@ const NotificacoesScreen = ({ navigation }) => {
                      <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 15, color: item.concluido ? '#999' : '#333', textDecorationLine: item.concluido ? 'line-through' : 'none', fontWeight: item.concluido ? 'normal' : '500' }}>{item.texto}</Text>
                         
-                        {/* EXIBE O PRAZO SE EXISTIR */}
-                        {item.data_limite && (
-                           <Text style={{ fontSize: 12, color: (new Date(item.data_limite) < new Date() && !item.concluido) ? '#d9534f' : '#666', marginTop: 4, fontWeight: (new Date(item.data_limite) < new Date() && !item.concluido) ? 'bold' : 'normal' }}>
-                             <Ionicons name="calendar-outline" size={12} /> Prazo: {new Date(item.data_limite).toLocaleDateString('pt-BR')}
-                             {(new Date(item.data_limite) < new Date() && !item.concluido) && " (Atrasado)"}
-                           </Text>
+                        {/* PRAZO CLICÁVEL COM COR DINÂMICA DA PRIORIDADE */}
+                        <TouchableOpacity 
+                          onPress={() => {
+                            setLembreteEditandoData(item);
+                            setShowDatePicker(true);
+                          }}
+                          style={{ marginTop: 4 }}
+                        >
+                          <Text style={{ 
+                            fontSize: 12, 
+                            // Se não tiver prazo ou estiver concluído = Cinza
+                            // Caso contrário, usa a cor exata da prioridade calculada!
+                            color: (!item.data_limite || item.concluido) 
+                              ? '#94a3b8' 
+                              : getCorPrioridadeAutomatica(item.data_limite, item.concluido), 
+                            fontWeight: 'bold' 
+                          }}>
+                            <Ionicons name="calendar-outline" size={12} /> Prazo: {item.data_limite ? new Date(item.data_limite).toLocaleDateString('pt-BR') : "Não definido"}
+                            
+                            {(item.data_limite && new Date(item.data_limite) < new Date() && !item.concluido) && " (Atrasado)"}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* ETIQUETA DO PRODUTO VINCULADO (AJUSTE DIRETO) */}
+                        {item.produto_id && item.nome_produto && (
+                          <TouchableOpacity 
+                            onPress={() => abrirAjusteRapido(item.produto_id)}
+                            style={{ marginTop: 8, backgroundColor: item.concluido ? '#f8f9fa' : '#f0f7ff', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: item.concluido ? '#eee' : '#cce4ff' }}
+                          >
+                            <Ionicons name="cube-outline" size={14} color={item.concluido ? '#999' : '#007AFF'} style={{ marginRight: 4 }} />
+                            <Text style={{ fontSize: 12, color: item.concluido ? '#999' : '#007AFF', fontWeight: '600' }}>{item.nome_produto}</Text>
+                          </TouchableOpacity>
                         )}
 
-                        {item.nome_responsavel && (
-                           <Text style={{ fontSize: 12, color: '#007AFF', marginTop: 4 }}><Ionicons name="person-outline" size={12} /> {item.nome_responsavel}</Text>
+                        {/* EXIBE QUEM CONCLUIU */}
+                        {item.concluido && item.nome_concluido_por && (
+                            <Text style={{ fontSize: 11, color: '#4CAF50', marginTop: 4, fontStyle: 'italic' }}>
+                              <Ionicons name="checkmark-done" size={12} /> Feito por: {item.nome_concluido_por}
+                            </Text>
                         )}
                      </View>
 
@@ -2648,6 +2838,100 @@ const NotificacoesScreen = ({ navigation }) => {
             )}
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* MODAL DE SELEÇÃO DE PRODUTOS */}
+      <Modal visible={modalProdutosVisible} transparent={true} animationType="fade">
+        <TouchableOpacity 
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+          activeOpacity={1}
+          onPress={() => setModalProdutosVisible(false)}
+        >
+          <TouchableWithoutFeedback>
+            <View style={{ backgroundColor: '#fff', borderRadius: 15, width: '90%', padding: 20, maxHeight: '80%', shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 10 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>Vincular Produto</Text>
+                <TouchableOpacity onPress={() => setModalProdutosVisible(false)}>
+                  <Ionicons name="close" size={28} color="#999" />
+                </TouchableOpacity>
+              </View>
+
+              {listaProdutos.length === 0 ? (
+                <ActivityIndicator size="large" color="#007AFF" style={{ marginVertical: 30 }} />
+              ) : (
+                <FlatList
+                  data={listaProdutos}
+                  keyExtractor={item => item.id.toString()}
+                  showsVerticalScrollIndicator={false}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity 
+                      style={{ padding: 15, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => {
+                        setProdutoSelecionado(item);
+                        setModalProdutosVisible(false);
+                      }}
+                    >
+                      <Ionicons name="cube-outline" size={20} color="#64748b" style={{ marginRight: 10 }} />
+                      <Text style={{ fontSize: 16, color: '#333' }}>{item.nome}</Text>
+                    </TouchableOpacity>
+                  )}
+                />
+              )}
+            </View>
+          </TouchableWithoutFeedback>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* MODAL DE AJUSTE RÁPIDO DE ESTOQUE */}
+      <Modal visible={modalAjusteVisible} transparent={true} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 15, width: '85%', padding: 20, alignItems: 'center', elevation: 10 }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 5 }}>Ajuste de Estoque</Text>
+            <Text style={{ fontSize: 16, color: '#666', marginBottom: 20 }}>{produtoParaAjuste?.nome}</Text>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 25 }}>
+              <TouchableOpacity 
+                onPress={() => setNovaQuantidade(prev => Math.max(0, prev - 1))}
+                style={{ backgroundColor: '#f1f5f9', width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center' }}
+              >
+                <Ionicons name="remove" size={24} color="#333" />
+              </TouchableOpacity>
+
+              <TextInput 
+                keyboardType="numeric"
+                value={String(novaQuantidade)}
+                onChangeText={(txt) => setNovaQuantidade(Number(txt.replace(/[^0-9]/g, '')))}
+                style={{ fontSize: 32, fontWeight: 'bold', marginHorizontal: 30, color: '#007AFF', textAlign: 'center', width: 80 }}
+              />
+
+              <TouchableOpacity 
+                onPress={() => setNovaQuantidade(prev => prev + 1)}
+                style={{ backgroundColor: '#f1f5f9', width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center' }}
+              >
+                <Ionicons name="add" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            {/* BOTÕES NO PADRÃO DO APP */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 10 }}>
+              <TouchableOpacity 
+                onPress={() => setModalAjusteVisible(false)}
+                style={{ flex: 1, backgroundColor: '#e2e8f0', padding: 15, borderRadius: 8, alignItems: 'center', marginRight: 10 }}
+              >
+                <Text style={{ color: '#64748b', fontWeight: 'bold', fontSize: 16 }}>Cancelar</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                onPress={salvarAjusteEstoque}
+                disabled={atualizandoEstoque}
+                style={{ flex: 1, backgroundColor: '#007AFF', padding: 15, borderRadius: 8, alignItems: 'center' }}
+              >
+                {atualizandoEstoque ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Confirmar</Text>}
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
       </Modal>
 
     </View>
