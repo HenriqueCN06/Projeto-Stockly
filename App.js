@@ -9,6 +9,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { createDrawerNavigator, DrawerContentScrollView, DrawerItemList } from '@react-navigation/drawer';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 // IMPORTAÇÃO DO BANCO DE DADOS
 import { supabase } from './src/services/supabase';
@@ -2219,26 +2220,34 @@ const EquipeScreen = ({ navigation }) => {
 };
 
 // ----------------------
-// SCREEN: NOTIFICAÇÕES (VERSÃO PRO)
+// SCREEN: NOTIFICAÇÕES & AFAZERES
 // ----------------------
 const NotificacoesScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
   const permissoesAtivas = useStore(state => state.permissoesAtivas);
   const setUnreadNotifCount = useStore(state => state.setUnreadNotifCount);
-  const [notificacoes, setNotificacoes] = useState([]);
-  const [loading, setLoading] = useState(true);
 
-  // Estados para Seleção Múltipla
+  // --- ESTADOS: AVISOS (Originais) ---
+  const [notificacoes, setNotificacoes] = useState([]);
+  const [loadingAvisos, setLoadingAvisos] = useState(true);
   const [selecionando, setSelecionando] = useState(false);
   const [selecionados, setSelecionados] = useState([]);
-
-  // Estados para Modais
   const [modalConfirmarVisible, setModalConfirmarVisible] = useState(false);
   const [modalAcaoUnicaVisible, setModalAcaoUnicaVisible] = useState(false);
   const [notifFocada, setNotifFocada] = useState(null);
 
+  // --- ESTADOS: AFAZERES (Novos) ---
+  const [abaAtiva, setAbaAtiva] = useState('avisos'); // 'avisos' ou 'afazeres'
+  const [lembretes, setLembretes] = useState([]);
+  const [loadingLembretes, setLoadingLembretes] = useState(true);
+  const [novoLembrete, setNovoLembrete] = useState('');
+  const [dataLimite, setDataLimite] = useState(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [criandoLembrete, setCriandoLembrete] = useState(false);
+
+  // === LÓGICA DE AVISOS ===
   const carregarNotificacoes = async () => {
-    setLoading(true);
+    setLoadingAvisos(true);
     const { data } = await supabase
       .from('notificacoes')
       .select('id, mensagem, tipo, lida, created_at')
@@ -2249,36 +2258,24 @@ const NotificacoesScreen = ({ navigation }) => {
       setNotificacoes(data);
       const naoLidas = data.filter(n => !n.lida).map(n => n.id);
       
-      // Se tem permissão, ele lê tudo. A bolinha zera.
       if (permissoesAtivas?.gerenciar_avisos && naoLidas.length > 0 && !selecionando) {
         await supabase.from('notificacoes').update({ lida: true }).in('id', naoLidas);
-        setUnreadNotifCount(0); // <-- ADICIONE
+        setUnreadNotifCount(0);
       } else {
-        // Se não tem permissão, a bolinha reflete os não lidos da tela
-        setUnreadNotifCount(naoLidas.length); // <-- ADICIONE
+        setUnreadNotifCount(naoLidas.length);
       }
     }
-    setLoading(false);
+    setLoadingAvisos(false);
   };
 
-  useEffect(() => {
-    carregarNotificacoes();
-  }, [lojaAtiva]);
-
-  // Função para alternar seleção de um item
   const toggleSelecao = (id) => {
-    if (selecionados.includes(id)) {
-      setSelecionados(selecionados.filter(item => item !== id));
-    } else {
-      setSelecionados([...selecionados, id]);
-    }
+    if (selecionados.includes(id)) setSelecionados(selecionados.filter(item => item !== id));
+    else setSelecionados([...selecionados, id]);
   };
 
-  // Funções de Ação (Banco de Dados)
   const handleApagarSelecionadas = async () => {
     try {
-      let novasNotificacoes = []; // <-- Criamos a variável aqui
-
+      let novasNotificacoes = [];
       if (selecionando) {
         await supabase.from('notificacoes').delete().in('id', selecionados);
         novasNotificacoes = notificacoes.filter(n => !selecionados.includes(n.id));
@@ -2289,30 +2286,23 @@ const NotificacoesScreen = ({ navigation }) => {
         await supabase.from('notificacoes').delete().eq('loja_id', lojaAtiva.id);
         novasNotificacoes = [];
       }
-
       setNotificacoes(novasNotificacoes);
       setUnreadNotifCount(novasNotificacoes.filter(n => !n.lida).length);
-
       sairModoSelecao();
       setNotifFocada(null);
       setModalConfirmarVisible(false);
       setModalAcaoUnicaVisible(false);
     } catch (error) {
       Alert.alert("Erro", "Não foi possível apagar os avisos.");
-      console.log(error);
     }
   };
 
   const handleMarcarComoLida = async (lidaStatus) => {
     const ids = selecionando ? selecionados : [notifFocada.id];
     await supabase.from('notificacoes').update({ lida: lidaStatus }).in('id', ids);
-    
-    // <-- Criamos a variável corretamente antes de usar
     const novasNotificacoes = notificacoes.map(n => ids.includes(n.id) ? { ...n, lida: lidaStatus } : n);
-    
     setNotificacoes(novasNotificacoes);
     setUnreadNotifCount(novasNotificacoes.filter(n => !n.lida).length);
-    
     sairModoSelecao();
     setModalAcaoUnicaVisible(false);
   };
@@ -2322,8 +2312,88 @@ const NotificacoesScreen = ({ navigation }) => {
     setSelecionados([]);
   };
 
+  // === LÓGICA DE AFAZERES ===
+  const carregarLembretes = async () => {
+    setLoadingLembretes(true);
+    const { data: lembretesData } = await supabase
+      .from('lembretes')
+      .select('*')
+      .eq('loja_id', lojaAtiva.id)
+      .order('concluido', { ascending: true }) // Tarefas abertas ficam no topo
+      .order('created_at', { ascending: false });
+
+    if (lembretesData) {
+      // Busca os nomes dos responsáveis (se houver) para exibir na tarefa
+      const ids = [...new Set(lembretesData.map(l => l.responsavel_id).filter(id => id))];
+      let perfisMap = {};
+      if (ids.length > 0) {
+        const { data: perfis } = await supabase.from('perfis').select('id, nome').in('id', ids);
+        if (perfis) perfis.forEach(p => { perfisMap[p.id] = p.nome });
+      }
+      
+      const lembretesComNomes = lembretesData.map(l => ({
+        ...l,
+        nome_responsavel: l.responsavel_id ? perfisMap[l.responsavel_id] : null
+      }));
+      setLembretes(lembretesComNomes);
+    }
+    setLoadingLembretes(false);
+  };
+
+  const handleCriarLembreteRapido = async () => {
+    if (!novoLembrete.trim()) return;
+    setCriandoLembrete(true);
+    const { data: { user } } = await supabase.auth.getUser();
+
+    const { error } = await supabase.from('lembretes').insert([{
+      loja_id: lojaAtiva.id,
+      texto: novoLembrete.trim(),
+      criador_id: user.id,
+      data_limite: dataLimite ? dataLimite.toISOString() : null // <-- Envia a data se existir
+    }]);
+
+    if (!error) {
+      setNovoLembrete('');
+      setDataLimite(null); // <-- Limpa a data após criar
+      carregarLembretes();
+    } else {
+      console.log("ERRO AO CRIAR TAREFA:", error);
+      Alert.alert("Erro", "Não foi possível criar a tarefa.");
+    }
+    setCriandoLembrete(false);
+  };
+
+  // Função para capturar a data escolhida no calendário
+  const onChangeDate = (event, selectedDate) => {
+    setShowDatePicker(false);
+    if (selectedDate) setDataLimite(selectedDate);
+  };
+
+  const toggleConcluido = async (tarefa) => {
+    // Atualiza a tela instantaneamente para dar sensação de velocidade
+    const novoStatus = !tarefa.concluido;
+    setLembretes(lembretes.map(l => l.id === tarefa.id ? { ...l, concluido: novoStatus } : l));
+    
+    // Envia para o banco
+    await supabase.from('lembretes').update({ concluido: novoStatus }).eq('id', tarefa.id);
+    
+    // Recarrega para que as tarefas concluídas desçam para o final da lista
+    carregarLembretes();
+  };
+
+  const apagarLembrete = async (id) => {
+    setLembretes(lembretes.filter(l => l.id !== id));
+    await supabase.from('lembretes').delete().eq('id', id);
+  };
+
+  useEffect(() => {
+    carregarNotificacoes();
+    carregarLembretes();
+  }, [lojaAtiva]);
+
   return (
     <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
+      
       {/* CABEÇALHO DINÂMICO */}
       <View style={{ paddingTop: Platform.OS === 'android' ? 40 : 50, paddingBottom: 15, paddingHorizontal: 20, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderColor: '#eee' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -2331,128 +2401,205 @@ const NotificacoesScreen = ({ navigation }) => {
             <Ionicons name={selecionando ? "close" : "arrow-back"} size={28} color="#333" />
           </TouchableOpacity>
           <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>
-            {selecionando ? `${selecionados.length} selecionados` : "Avisos"}
+            {selecionando ? `${selecionados.length} selecionados` : (abaAtiva === 'avisos' ? "Avisos" : "Afazeres")}
           </Text>
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {!selecionando ? (
             <>
-              {permissoesAtivas?.gerenciar_avisos && (
+              {abaAtiva === 'avisos' && permissoesAtivas?.gerenciar_avisos && (
                 <TouchableOpacity onPress={() => setSelecionando(true)} style={{ marginRight: 15 }}>
                   <Text style={{ color: '#007AFF', fontWeight: 'bold' }}>Selecionar</Text>
                 </TouchableOpacity>
               )}
-              {permissoesAtivas?.gerenciar_avisos && notificacoes.length > 0 && (
-                <TouchableOpacity onPress={() => {
-                  setNotifFocada(null); // <-- Garante que a função saiba que é para apagar TODAS
-                  setModalConfirmarVisible(true);
-                }}>
+              {abaAtiva === 'avisos' && permissoesAtivas?.gerenciar_avisos && notificacoes.length > 0 && (
+                <TouchableOpacity onPress={() => { setNotifFocada(null); setModalConfirmarVisible(true); }}>
                   <Ionicons name="trash-outline" size={24} color="#d9534f" />
                 </TouchableOpacity>
               )}
             </>
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              {/* Botão Marcar como Lida */}
-              <TouchableOpacity 
-                onPress={() => handleMarcarComoLida(true)} 
-                style={{ marginRight: 20 }} 
-                disabled={selecionados.length === 0}
-              >
-                <Ionicons 
-                  name="mail-open-outline" 
-                  size={24} 
-                  color={selecionados.length === 0 ? "#ccc" : "#007AFF"} 
-                />
+              <TouchableOpacity onPress={() => handleMarcarComoLida(true)} style={{ marginRight: 20 }} disabled={selecionados.length === 0}>
+                <Ionicons name="mail-open-outline" size={24} color={selecionados.length === 0 ? "#ccc" : "#007AFF"} />
               </TouchableOpacity>
-
-              {/* Botão Marcar como Não Lida */}
-              <TouchableOpacity 
-                onPress={() => handleMarcarComoLida(false)} 
-                style={{ marginRight: 20 }} 
-                disabled={selecionados.length === 0}
-              >
-                <Ionicons 
-                  name="mail-unread-outline" 
-                  size={24} 
-                  color={selecionados.length === 0 ? "#ccc" : "#007AFF"} 
-                />
+              <TouchableOpacity onPress={() => handleMarcarComoLida(false)} style={{ marginRight: 20 }} disabled={selecionados.length === 0}>
+                <Ionicons name="mail-unread-outline" size={24} color={selecionados.length === 0 ? "#ccc" : "#007AFF"} />
               </TouchableOpacity>
-
-              {/* Botão Apagar */}
-              <TouchableOpacity 
-                onPress={() => setModalConfirmarVisible(true)} 
-                disabled={selecionados.length === 0}
-              >
-                <Ionicons 
-                  name="trash-outline" 
-                  size={24} 
-                  color={selecionados.length === 0 ? "#ccc" : "#d9534f"} 
-                />
+              <TouchableOpacity onPress={() => setModalConfirmarVisible(true)} disabled={selecionados.length === 0}>
+                <Ionicons name="trash-outline" size={24} color={selecionados.length === 0 ? "#ccc" : "#d9534f"} />
               </TouchableOpacity>
             </View>
           )}
         </View>
       </View>
 
-      {/* LISTA DE NOTIFICAÇÕES */}
-      {loading ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator size="large" color="#007AFF" /></View>
-      ) : notificacoes.length === 0 ? (
-        <View style={{ flex: 1, alignItems: 'center', padding: 20, paddingTop: '65%' }}>
-          <Ionicons name="notifications-off-outline" size={64} color="#ccc" />
-          <Text style={{ marginTop: 20, fontSize: 18, color: '#666', fontWeight: 'bold' }}>Nenhum aviso por aqui.</Text>
-          <Text style={{ marginTop: 10, fontSize: 14, color: '#999', textAlign: 'center' }}>Quando produtos atingirem o estoque mínimo ou forem movimentados, você será avisado aqui.</Text>
+      {/* NOVO: TOGGLE DE ABAS */}
+      {!selecionando && (
+        <View style={{ flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, marginHorizontal: 20, marginTop: 15, padding: 4 }}>
+          <TouchableOpacity onPress={() => setAbaAtiva('avisos')} style={{ flex: 1, paddingVertical: 8, backgroundColor: abaAtiva === 'avisos' ? '#fff' : 'transparent', borderRadius: 6, alignItems: 'center', elevation: abaAtiva === 'avisos' ? 2 : 0 }}>
+            <Text style={{ fontWeight: abaAtiva === 'avisos' ? 'bold' : '500', color: abaAtiva === 'avisos' ? '#333' : '#64748b' }}>Avisos do Sistema</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setAbaAtiva('afazeres')} style={{ flex: 1, paddingVertical: 8, backgroundColor: abaAtiva === 'afazeres' ? '#fff' : 'transparent', borderRadius: 6, alignItems: 'center', elevation: abaAtiva === 'afazeres' ? 2 : 0 }}>
+            <Text style={{ fontWeight: abaAtiva === 'afazeres' ? 'bold' : '500', color: abaAtiva === 'afazeres' ? '#333' : '#64748b' }}>Lista de Tarefas</Text>
+          </TouchableOpacity>
         </View>
-      ) : (
-        <FlatList
-          data={notificacoes}
-          keyExtractor={(item) => item.id.toString()}
-          contentContainerStyle={{ padding: 15 }}
-          renderItem={({ item }) => {
-            const isSelected = selecionados.includes(item.id);
-            const isMinimo = item.tipo === 'alerta_minimo';
-
-            return (
-              <TouchableOpacity 
-                activeOpacity={0.7}
-                onPress={() => {
-                  if (selecionando) toggleSelecao(item.id);
-                  else if (permissoesAtivas?.gerenciar_avisos) { // <-- TRAVA AQUI
-                    setNotifFocada(item);
-                    setModalAcaoUnicaVisible(true);
-                  }
-                }}
-                style={{
-                  backgroundColor: isSelected ? '#e6f2ff' : (item.lida ? '#fff' : '#f0f7ff'), 
-                  padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', 
-                  borderWidth: 1, borderColor: isSelected ? '#007AFF' : (item.lida ? '#eee' : '#b3d4ff'),
-                  elevation: 2
-                }}
-              >
-                {selecionando && (
-                  <View style={{ marginRight: 10 }}>
-                    <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={24} color={isSelected ? "#007AFF" : "#ccc"} />
-                  </View>
-                )}
-                
-                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: isMinimo ? '#fff3cd' : '#e2e8f0', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                  <Ionicons name={isMinimo ? "warning" : "swap-vertical"} size={20} color={isMinimo ? "#ffc107" : "#64748b"} />
-                </View>
-
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, color: '#333', fontWeight: item.lida ? 'normal' : 'bold' }}>{item.mensagem}</Text>
-                </View>
-
-                {!item.lida && !selecionando && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#007AFF' }} />}
-              </TouchableOpacity>
-            );
-          }}
-        />
       )}
 
-      {/* MODAL PADRONIZADO: APAGAR (ESTILO PRODUTO/ESTOQUE) */}
+      {/* === CONTEÚDO DA ABA: AVISOS === */}
+      {abaAtiva === 'avisos' && (
+        loadingAvisos ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator size="large" color="#007AFF" /></View>
+        ) : notificacoes.length === 0 ? (
+          <View style={{ flex: 1, alignItems: 'center', padding: 20, paddingTop: '40%' }}>
+            <Ionicons name="notifications-off-outline" size={64} color="#ccc" />
+            <Text style={{ marginTop: 20, fontSize: 18, color: '#666', fontWeight: 'bold' }}>Nenhum aviso por aqui.</Text>
+            <Text style={{ marginTop: 10, fontSize: 14, color: '#999', textAlign: 'center' }}>Quando produtos atingirem o estoque mínimo ou forem movimentados, você será avisado aqui.</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={notificacoes}
+            keyExtractor={(item) => item.id.toString()}
+            contentContainerStyle={{ padding: 15 }}
+            renderItem={({ item }) => {
+              const isSelected = selecionados.includes(item.id);
+              const isMinimo = item.tipo === 'alerta_minimo';
+              return (
+                <TouchableOpacity 
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (selecionando) toggleSelecao(item.id);
+                    else if (permissoesAtivas?.gerenciar_avisos) {
+                      setNotifFocada(item);
+                      setModalAcaoUnicaVisible(true);
+                    }
+                  }}
+                  style={{
+                    backgroundColor: isSelected ? '#e6f2ff' : (item.lida ? '#fff' : '#f0f7ff'), 
+                    padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', 
+                    borderWidth: 1, borderColor: isSelected ? '#007AFF' : (item.lida ? '#eee' : '#b3d4ff'), elevation: 2
+                  }}
+                >
+                  {selecionando && (
+                    <View style={{ marginRight: 10 }}>
+                      <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={24} color={isSelected ? "#007AFF" : "#ccc"} />
+                    </View>
+                  )}
+                  <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: isMinimo ? '#fff3cd' : '#e2e8f0', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                    <Ionicons name={isMinimo ? "warning" : "swap-vertical"} size={20} color={isMinimo ? "#ffc107" : "#64748b"} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, color: '#333', fontWeight: item.lida ? 'normal' : 'bold' }}>{item.mensagem}</Text>
+                  </View>
+                  {!item.lida && !selecionando && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#007AFF' }} />}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        )
+      )}
+
+      {/* === CONTEÚDO DA ABA: AFAZERES === */}
+      {abaAtiva === 'afazeres' && (
+        <View style={{ flex: 1 }}>
+          
+          {/* BARRA DE CRIAR RÁPIDA */}
+          <View style={{ paddingHorizontal: 20, paddingTop: 15, paddingBottom: 5 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
+                <Ionicons name="add-circle-outline" size={22} color="#64748b" />
+                <TextInput
+                  placeholder="Ex: Fazer inventário..."
+                  placeholderTextColor="#94a3b8"
+                  value={novoLembrete}
+                  onChangeText={setNovoLembrete}
+                  style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }}
+                  onSubmitEditing={handleCriarLembreteRapido}
+                />
+                
+                {/* BOTÃO DO CALENDÁRIO */}
+                <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ paddingHorizontal: 5 }}>
+                  <Ionicons name="calendar" size={22} color={dataLimite ? "#007AFF" : "#94a3b8"} />
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                onPress={handleCriarLembreteRapido}
+                disabled={criandoLembrete || !novoLembrete}
+                style={{ marginLeft: 10, backgroundColor: (criandoLembrete || !novoLembrete) ? '#a0cbfc' : '#007AFF', width: 48, height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }}
+              >
+                {criandoLembrete ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={20} color="#fff" />}
+              </TouchableOpacity>
+            </View>
+            
+            {/* TEXTO AVISANDO A DATA ESCOLHIDA ANTES DE ENVIAR */}
+            {dataLimite && (
+              <Text style={{ color: '#007AFF', fontSize: 12, marginTop: 5, marginLeft: 5, fontWeight: 'bold' }}>
+                Prazo: {dataLimite.toLocaleDateString('pt-BR')} 
+                <Text onPress={() => setDataLimite(null)} style={{ color: '#d9534f' }}> (Remover)</Text>
+              </Text>
+            )}
+
+            {/* O MODAL DO CALENDÁRIO INVISÍVEL */}
+            {showDatePicker && (
+              <DateTimePicker
+                value={dataLimite || new Date()}
+                mode="date"
+                display="default"
+                onChange={onChangeDate}
+              />
+            )}
+          </View>
+
+          {/* LISTA DE TAREFAS */}
+          {loadingLembretes ? (
+             <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+          ) : lembretes.length === 0 ? (
+             <View style={{ flex: 1, alignItems: 'center', padding: 20, paddingTop: '30%' }}>
+               <Ionicons name="checkmark-done-circle-outline" size={64} color="#ccc" />
+               <Text style={{ marginTop: 20, fontSize: 16, color: '#666', fontWeight: 'bold' }}>Tudo limpo por aqui!</Text>
+               <Text style={{ marginTop: 10, fontSize: 14, color: '#999', textAlign: 'center' }}>Adicione tarefas acima para a sua equipe.</Text>
+             </View>
+          ) : (
+             <FlatList
+               data={lembretes}
+               keyExtractor={item => item.id.toString()}
+               contentContainerStyle={{ padding: 15 }}
+               renderItem={({ item }) => (
+                  <View style={{ backgroundColor: item.concluido ? '#f8f9fa' : '#fff', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: item.concluido ? '#eee' : '#e2e8f0', elevation: item.concluido ? 0 : 1 }}>
+                     
+                     <TouchableOpacity onPress={() => toggleConcluido(item)} style={{ marginRight: 15 }}>
+                        <Ionicons name={item.concluido ? "checkmark-circle" : "ellipse-outline"} size={28} color={item.concluido ? "#4CAF50" : "#ccc"} />
+                     </TouchableOpacity>
+
+                     <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, color: item.concluido ? '#999' : '#333', textDecorationLine: item.concluido ? 'line-through' : 'none', fontWeight: item.concluido ? 'normal' : '500' }}>{item.texto}</Text>
+                        
+                        {/* EXIBE O PRAZO SE EXISTIR */}
+                        {item.data_limite && (
+                           <Text style={{ fontSize: 12, color: (new Date(item.data_limite) < new Date() && !item.concluido) ? '#d9534f' : '#666', marginTop: 4, fontWeight: (new Date(item.data_limite) < new Date() && !item.concluido) ? 'bold' : 'normal' }}>
+                             <Ionicons name="calendar-outline" size={12} /> Prazo: {new Date(item.data_limite).toLocaleDateString('pt-BR')}
+                             {(new Date(item.data_limite) < new Date() && !item.concluido) && " (Atrasado)"}
+                           </Text>
+                        )}
+
+                        {item.nome_responsavel && (
+                           <Text style={{ fontSize: 12, color: '#007AFF', marginTop: 4 }}><Ionicons name="person-outline" size={12} /> {item.nome_responsavel}</Text>
+                        )}
+                     </View>
+
+                     <TouchableOpacity onPress={() => apagarLembrete(item.id)} style={{ padding: 5 }}>
+                        <Ionicons name="trash-outline" size={22} color="#d9534f" />
+                     </TouchableOpacity>
+                  </View>
+               )}
+             />
+          )}
+        </View>
+      )}
+
+      {/* MODAL DE CONFIRMAR APAGAR AVISOS (Mantido intacto) */}
       <Modal visible={modalConfirmarVisible} transparent={true} animationType="fade">
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
           <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '85%', overflow: 'hidden' }}>
@@ -2481,7 +2628,7 @@ const NotificacoesScreen = ({ navigation }) => {
         </View>
       </Modal>
 
-      {/* MODAL DE AÇÃO ÚNICA (AO CLICAR NA NOTIFICAÇÃO) */}
+      {/* MODAL DE AÇÃO ÚNICA AVISOS (Mantido intacto) */}
       <Modal visible={modalAcaoUnicaVisible} transparent={true} animationType="fade">
         <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setModalAcaoUnicaVisible(false)}>
           <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '80%', overflow: 'hidden' }}>
@@ -2490,11 +2637,10 @@ const NotificacoesScreen = ({ navigation }) => {
               <Text style={{ fontSize: 16, color: '#333' }}>{notifFocada?.lida ? "Marcar como não lida" : "Marcar como lida"}</Text>
             </TouchableOpacity>
             
-            {/* SÓ MOSTRA SE TIVER PERMISSÃO */}
             {permissoesAtivas?.gerenciar_avisos && (
               <TouchableOpacity onPress={() => {
                 setModalAcaoUnicaVisible(false);
-                setTimeout(() => setModalConfirmarVisible(true), 150); // Abre o modal de confirmação
+                setTimeout(() => setModalConfirmarVisible(true), 150);
               }} style={{ padding: 18, flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="trash-outline" size={22} color="#d9534f" style={{ marginRight: 15 }} />
                 <Text style={{ fontSize: 16, color: '#d9534f' }}>Apagar aviso</Text>
@@ -2503,6 +2649,7 @@ const NotificacoesScreen = ({ navigation }) => {
           </View>
         </TouchableOpacity>
       </Modal>
+
     </View>
   );
 };
