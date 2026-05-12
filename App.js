@@ -8,6 +8,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createDrawerNavigator, DrawerContentScrollView, DrawerItemList } from '@react-navigation/drawer';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 // IMPORTAÇÃO DO BANCO DE DADOS
 import { supabase } from './src/services/supabase';
@@ -700,7 +701,7 @@ const EmptyScreen = ({ navigation }) => {
           usuario_id: meuId,
           tipo: 'SAIDA',
           quantidade: produtoEditando.estoque_atual, // Zera tudo que sobrou
-          observacao: 'Produto inativado / excluído'
+          observacao: 'Produto inativado (excluído)'
         }]);
       }
 
@@ -2004,14 +2005,20 @@ const EquipeScreen = ({ navigation }) => {
       {/* Removemos o paddingHorizontal da View principal para a linha poder esticar mais */}
       <View style={{ flex: 1 }}>
         
-        {/* Container fixo do Título + Linha */}
-        <View style={{ backgroundColor: '#f5f5f5', zIndex: 1, paddingTop: 15 }}>
-          <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#888', marginHorizontal: 20, marginBottom: 10, textTransform: 'uppercase' }}>
-            Membros Atuais
-          </Text>
+        {/* Container fixo do Título + Degradê */}
+        <View style={{ zIndex: 1 }}>
+          <View style={{ backgroundColor: '#f5f5f5', paddingTop: 15, paddingBottom: 10 }}>
+            <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#888', marginHorizontal: 20, textTransform: 'uppercase' }}>
+              Membros Atuais
+            </Text>
+          </View>
           
-          {/* A Linha: Usamos margin 10 (os cards têm 20), assim ela fica mais larga que eles, mas não encosta na tela */}
-          <View style={{ height: 1, backgroundColor: '#a1a1aa', marginHorizontal: 10 }} />
+          {/* O DEGRADÊ (FADE): Fica posicionado em absoluto para cair por cima da lista */}
+          <LinearGradient
+            colors={['#f5f5f5', 'rgba(245,245,245,0)']}
+            style={{ height: 25, width: '100%', position: 'absolute', bottom: -25 }}
+            pointerEvents="none"
+          />
         </View>
 
         {/* Devolvemos o paddingHorizontal 20 apenas para a área da lista */}
@@ -2029,7 +2036,7 @@ const EquipeScreen = ({ navigation }) => {
             data={equipe}
             keyExtractor={(item) => item.id.toString()}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingTop: 10, paddingBottom: 20 }}
+            contentContainerStyle={{ paddingTop: 25, paddingBottom: 20 }}
             renderItem={({ item }) => {
               const souEu = item.usuario_id === meuId; 
               const souDono = lojaAtiva?.dono_id === meuId;
