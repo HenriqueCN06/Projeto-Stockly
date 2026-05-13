@@ -971,6 +971,7 @@ const EmptyScreen = ({ navigation }) => {
                           onChangeText={setTempStockValue}
                           keyboardType="numeric"
                           autoFocus={true} // Já abre o teclado automaticamente
+                          selectTextOnFocus={true} // <-- A MÁGICA: Seleciona todo o texto ao focar!
                           onBlur={() => handleSalvarEstoqueInline(item)} // O onBlur será o único responsável por salvar
                           onSubmitEditing={() => Keyboard.dismiss()} // O Enter apenas fecha o teclado (o que vai acionar o onBlur automaticamente)
                         />
@@ -1142,7 +1143,20 @@ const EmptyScreen = ({ navigation }) => {
                   </View>
                   
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <TextInput placeholder="Estoque Atual" placeholderTextColor="#999" value={estoqueAtual} onChangeText={setEstoqueAtual} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
+                    <TextInput 
+                      placeholder="Estoque Atual" 
+                      placeholderTextColor="#999" 
+                      value={estoqueAtual} 
+                      onChangeText={setEstoqueAtual} 
+                      // NOVO: Trava de segurança + Feedback visual (fica cinza se não puder editar)
+                      editable={!produtoEditando || permissoesAtivas?.quantidades}
+                      style={[
+                        styles.input, 
+                        { width: '48%' },
+                        (produtoEditando && !permissoesAtivas?.quantidades) && { backgroundColor: '#e2e8f0', color: '#94a3b8' }
+                      ]} 
+                      keyboardType="numeric" 
+                    />
                     <TextInput placeholder="Estoque Mín." placeholderTextColor="#999" value={estoqueMinimo} onChangeText={setEstoqueMinimo} style={[styles.input, { width: '48%' }]} keyboardType="numeric" />
                   </View>
 
@@ -1748,11 +1762,7 @@ const EquipeScreen = ({ navigation }) => {
   const [membroSelecionado, setMembroSelecionado] = useState(null);
   const [loadingPerms, setLoadingPerms] = useState(false);
   const [perms, setPerms] = useState({
-    quantidades: false,
-    adicionar: false,
-    editar: false,
-    gerenciar: false,
-    gerenciar_avisos: false
+    quantidades: false, adicionar: false, editar: false, gerenciar: false, gerenciar_avisos: false, gerenciar_tarefas: false
   });
 
   const showBanner = (message, type = 'success') => {
@@ -1916,7 +1926,8 @@ const EquipeScreen = ({ navigation }) => {
       adicionar: membro.perm_adicionar_produto || false,
       editar: membro.perm_editar_produto || false,
       gerenciar: membro.perm_gerenciar_membros || false,
-      gerenciar_avisos: membro.perm_gerenciar_avisos || false
+      gerenciar_avisos: membro.perm_gerenciar_avisos || false,
+      gerenciar_tarefas: membro.perm_gerenciar_tarefas || false
     });
     setModalPermissoesVisible(true);
   };
@@ -1931,7 +1942,8 @@ const EquipeScreen = ({ navigation }) => {
           perm_adicionar_produto: perms.adicionar,
           perm_editar_produto: perms.editar,
           perm_gerenciar_membros: perms.gerenciar,
-          perm_gerenciar_avisos: perms.gerenciar_avisos
+          perm_gerenciar_avisos: perms.gerenciar_avisos,
+          perm_gerenciar_tarefas: perms.gerenciar_tarefas
         })
         .eq('id', membroSelecionado.id);
 
@@ -2206,6 +2218,14 @@ const EquipeScreen = ({ navigation }) => {
                   <Switch value={perms.gerenciar_avisos} onValueChange={(val) => setPerms({...perms, gerenciar_avisos: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar_avisos ? "#007AFF" : "#f4f3f4"} />
                 </View>
 
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Tarefas</Text>
+                    <Text style={{ fontSize: 12, color: '#888' }}>Permite criar, editar datas e apagar tarefas.</Text>
+                  </View>
+                  <Switch value={perms.gerenciar_tarefas} onValueChange={(val) => setPerms({...perms, gerenciar_tarefas: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar_tarefas ? "#007AFF" : "#f4f3f4"} />
+                </View>
+
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
                   <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Membros</Text>
@@ -2242,6 +2262,8 @@ const NotificacoesScreen = ({ navigation }) => {
   const permissoesAtivas = useStore(state => state.permissoesAtivas);
   const setUnreadNotifCount = useStore(state => state.setUnreadNotifCount);
   const { setProdutoParaEditarId } = useStore();
+  const products = useStore(state => state.products);
+  const setProducts = useStore(state => state.setProducts);
 
   // --- ESTADOS: AVISOS (Originais) ---
   const [notificacoes, setNotificacoes] = useState([]);
@@ -2268,6 +2290,15 @@ const NotificacoesScreen = ({ navigation }) => {
   const [produtoParaAjuste, setProdutoParaAjuste] = useState(null);
   const [novaQuantidade, setNovaQuantidade] = useState(0);
   const [atualizandoEstoque, setAtualizandoEstoque] = useState(false);
+
+  // --- NOVO: ESTADOS DE NOTIFICAÇÃO (BANNER E MODAL) ---
+  const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
+  const [modalConfirmarLimpeza, setModalConfirmarLimpeza] = useState(false); // <-- ADICIONADO AQUI NA TELA CERTA
+  
+  const showBanner = (message, type = 'success') => {
+    setNotification({ visible: true, message, type });
+    setTimeout(() => setNotification({ visible: false, message: '', type: 'success' }), 3000);
+  };
 
   // === LÓGICA DE AVISOS ===
   const carregarNotificacoes = async () => {
@@ -2342,15 +2373,11 @@ const NotificacoesScreen = ({ navigation }) => {
     const { data: lembretesData } = await supabase
       .from('lembretes')
       .select('*')
-      .eq('loja_id', lojaAtiva.id)
-      .order('concluido', { ascending: true }) // Tarefas abertas ficam no topo
-      .order('created_at', { ascending: false });
+      .eq('loja_id', lojaAtiva.id);
 
     if (lembretesData) {
-      // Captura apenas os IDs de quem concluiu (A linha que tinha sumido!)
+      // 1. BUSCA DE NOMES
       const ids = [...new Set(lembretesData.map(l => l.concluido_por_id).filter(id => id))];
-
-      // Captura apenas os IDs dos produtos vinculados
       const prodIds = [...new Set(lembretesData.map(l => l.produto_id).filter(id => id))];
       
       let produtosMap = {};
@@ -2364,15 +2391,127 @@ const NotificacoesScreen = ({ navigation }) => {
         const { data: perfis } = await supabase.from('perfis').select('id, nome').in('id', ids);
         if (perfis) perfis.forEach(p => { perfisMap[p.id] = p.nome });
       }
+
+      // 2. RADAR DE PRIORIDADES E MAPEAMENTO
+      const alertasGerados = [];
+      const atualizacoesPrioridade = [];
       
-      const lembretesComNomes = lembretesData.map(l => ({
-        ...l,
-        nome_concluido_por: l.concluido_por_id ? perfisMap[l.concluido_por_id] : null,
-        nome_produto: l.produto_id ? produtosMap[l.produto_id] : null
-      }));
-      setLembretes(lembretesComNomes);
+      const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+
+      const lembretesComNomes = lembretesData.map(l => {
+        // Motor de tempo (Com separação entre HOJE e ATRASADA)
+        if (!l.concluido && l.data_limite) {
+          const limite = new Date(l.data_limite);
+
+          if (!isNaN(limite.getTime())) {
+            limite.setHours(0, 0, 0, 0);
+            const diffDias = Math.ceil((limite.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
+            
+            // Nova Hierarquia de Níveis:
+            let nivelAtual = 1; 
+            if (diffDias < 0) nivelAtual = 4;      // ATRASADA (Nível Crítico)
+            else if (diffDias === 0) nivelAtual = 3; // VENCE HOJE (Nível Urgente)
+            else if (diffDias <= 2) nivelAtual = 2;  // ATENÇÃO (1 ou 2 dias)
+
+            const nivelNotificado = l.prioridade_notificada || 1;
+
+            // Dispara apenas se a urgência aumentou
+            if (nivelAtual > nivelNotificado) {
+              let urgenciaStr = "";
+              
+              if (nivelAtual === 4) {
+                urgenciaStr = "está ATRASADA";
+              } else if (nivelAtual === 3) {
+                urgenciaStr = "vence HOJE";
+              } else {
+                urgenciaStr = `entrou em estado de ATENÇÃO (vence em ${diffDias} ${diffDias === 1 ? 'dia' : 'dias'})`;
+              }
+              
+              alertasGerados.push({
+                loja_id: lojaAtiva.id,
+                mensagem: `Urgência: A tarefa "${l.texto}" ${urgenciaStr}!`,
+                tipo: 'alerta_tarefa'
+              });
+
+              atualizacoesPrioridade.push({
+                id: l.id,
+                prioridade_notificada: nivelAtual
+              });
+            }
+          }
+        }
+
+        return {
+          ...l,
+          nome_concluido_por: l.concluido_por_id ? perfisMap[l.concluido_por_id] : null,
+          nome_produto: l.produto_id ? produtosMap[l.produto_id] : null
+        };
+      });
+
+      // 3. DISPARO DE AVISOS NO BANCO
+      if (alertasGerados.length > 0) {
+        await supabase.from('notificacoes').insert(alertasGerados);
+        setUnreadNotifCount(prev => prev + alertasGerados.length);
+        
+        for (const atualizacao of atualizacoesPrioridade) {
+          await supabase.from('lembretes')
+            .update({ prioridade_notificada: atualizacao.prioridade_notificada })
+            .eq('id', atualizacao.id);
+        }
+      }
+
+      // 4. ORDENAÇÃO INTELIGENTE
+      const lembretesOrdenados = lembretesComNomes.sort((a, b) => {
+        if (a.concluido && !b.concluido) return 1;
+        if (!a.concluido && b.concluido) return -1;
+
+        if (!a.concluido && !b.concluido) {
+          if (a.data_limite && !b.data_limite) return -1; 
+          if (!a.data_limite && b.data_limite) return 1;  
+
+          if (a.data_limite && b.data_limite) {
+            // A MÁGICA: Zera as horas para comparar apenas os dias (Ontem > Hoje > Amanhã)
+            const dataA = new Date(a.data_limite); dataA.setHours(0, 0, 0, 0);
+            const dataB = new Date(b.data_limite); dataB.setHours(0, 0, 0, 0);
+            
+            if (dataA.getTime() !== dataB.getTime()) {
+              return dataA.getTime() - dataB.getTime();
+            }
+            // Desempate se caírem no mesmo dia: a mais recente fica no topo
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          }
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        }
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+
+      setLembretes(lembretesOrdenados);
     }
     setLoadingLembretes(false);
+  };
+
+  // Abre apenas o modal de confirmação
+  const handleLimparConcluidas = () => {
+    setModalConfirmarLimpeza(true);
+  };
+
+  // Executa a limpeza de fato após a confirmação
+  const executarLimpezaDefinitiva = async () => {
+    setModalConfirmarLimpeza(false);
+    
+    const { error } = await supabase
+      .from('lembretes')
+      .delete()
+      .eq('loja_id', lojaAtiva.id)
+      .eq('concluido', true);
+
+    if (!error) {
+      showBanner("Tarefas concluídas removidas!", "success");
+      carregarLembretes();
+    } else {
+      showBanner("Erro ao limpar tarefas.", "error");
+    }
   };
 
   // AGORA SIM, a função de abrir o modal no lugar certo (fora do carregarLembretes)
@@ -2410,29 +2549,38 @@ const NotificacoesScreen = ({ navigation }) => {
   const onChangeDate = async (event, selectedDate) => {
     setShowDatePicker(false);
     
-    if (!selectedDate) return;
+    // A MÁGICA DA CORREÇÃO: Se o usuário cancelar ou a data falhar, limpa a memória fantasma!
+    if (event.type === 'dismissed' || !selectedDate) {
+      setLembreteEditandoData(null); 
+      return;
+    }
 
     // Cenário A: Editando a data de uma tarefa que já existe
     if (lembreteEditandoData) {
       const tarefaId = lembreteEditandoData.id;
       
-      // Atualiza na tela (Visual)
       setLembretes(lembretes.map(l => l.id === tarefaId ? { ...l, data_limite: selectedDate.toISOString() } : l));
       
-      // Salva no Supabase
+      // Salva no Supabase E reseta o radar de notificações!
       const { error } = await supabase
         .from('lembretes')
-        .update({ data_limite: selectedDate.toISOString() })
+        .update({ 
+          data_limite: selectedDate.toISOString(),
+          prioridade_notificada: 1 
+        })
         .eq('id', tarefaId);
 
       if (error) {
         Alert.alert("Erro", "Não foi possível atualizar o prazo.");
-        carregarLembretes(); // Reverte para o estado anterior em caso de erro
+        carregarLembretes();
+      } else {
+        // A MÁGICA: Atualizou com sucesso? Roda o radar imediatamente para ele ver a nova data e disparar os avisos!
+        carregarLembretes(); 
       }
       
-      setLembreteEditandoData(null); // Limpa o estado de edição
+      setLembreteEditandoData(null); // Limpa o estado após o sucesso
     } 
-    // Cenário B: Definindo a data para um NOVO lembrete (o que já fazíamos)
+    // Cenário B: Definindo a data para um NOVO lembrete
     else {
       setDataLimite(selectedDate);
     }
@@ -2456,6 +2604,19 @@ const NotificacoesScreen = ({ navigation }) => {
     if (diffDays === 0) return '#ff3b30'; // Vermelho Forte: É para hoje!
     if (diffDays <= 2) return '#ffc107'; // Amarelo: Faltam 1 ou 2 dias
     return '#4CAF50'; // Verde: Faltam 3 dias ou mais
+  };
+
+  // Função para verificar se a data limite é estritamente anterior a hoje (ignorando horas)
+  const isAtrasado = (dataLimite, concluido) => {
+    if (concluido || !dataLimite) return false;
+    
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0); // Zera o relógio para a meia-noite de hoje
+    
+    const prazo = new Date(dataLimite);
+    prazo.setHours(0, 0, 0, 0); // Zera o relógio do prazo
+    
+    return prazo < hoje; // Só é atrasado se o dia já tiver ficado para trás
   };
 
   const toggleConcluido = async (tarefa) => {
@@ -2493,10 +2654,10 @@ const NotificacoesScreen = ({ navigation }) => {
   }, [lojaAtiva]);
 
   const abrirAjusteRapido = async (produtoId) => {
-    // Busca os dados frescos do produto no banco
+    // Busca os dados frescos e as configurações de notificação do produto
     const { data, error } = await supabase
       .from('produtos')
-      .select('id, nome, estoque_atual') // <-- CORRIGIDO AQUI
+      .select('id, nome, estoque_atual, estoque_minimo, notificar_minimo, notificar_movimentacao') // <-- NOMES CORRETOS!
       .eq('id', produtoId)
       .single();
 
@@ -2510,26 +2671,108 @@ const NotificacoesScreen = ({ navigation }) => {
   };
 
   const salvarAjusteEstoque = async () => {
+    // Validação: Se não mudou nada, só fecha a janela
+    if (novaQuantidade === produtoParaAjuste.estoque_atual) {
+      setModalAjusteVisible(false);
+      return;
+    }
+
     setAtualizandoEstoque(true);
+    const diferenca = novaQuantidade - produtoParaAjuste.estoque_atual;
+    const { data: { user } } = await supabase.auth.getUser();
+
     const { error } = await supabase
       .from('produtos')
-      .update({ estoque_atual: novaQuantidade }) // <-- NOME CORRETO DA COLUNA!
+      .update({ estoque_atual: novaQuantidade })
       .eq('id', produtoParaAjuste.id);
 
     if (!error) {
-      Alert.alert("Sucesso", "Estoque atualizado!");
+      // REGISTRA NO HISTÓRICO!
+      await supabase.from('movimentacoes').insert([{
+        produto_id: produtoParaAjuste.id,
+        usuario_id: user.id,
+        tipo: diferenca > 0 ? 'ENTRADA' : 'SAIDA',
+        quantidade: Math.abs(diferenca),
+        observacao: 'Ajuste rápido (Tarefas)'
+      }]);
+
+      // --- DISPARO DE NOTIFICAÇÕES (ALARMES) ---
+      const alertas = [];
+      
+      // 1. Verifica se tem Alerta de Movimentação ligado
+      if (produtoParaAjuste.notificar_movimentacao) { // <-- NOME CORRETO
+        alertas.push({
+          loja_id: lojaAtiva.id,
+          mensagem: `Ajuste manual: ${diferenca > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(diferenca)} unid. de ${produtoParaAjuste.nome}.`, // <-- Troquei 'texto' por 'mensagem' para seguir o padrão da tela EmptyScreen
+          tipo: 'movimentacao',
+        });
+      }
+
+      // 2. Verifica se tem Alerta de Estoque Mínimo ligado e se atingiu o limite
+      if (produtoParaAjuste.notificar_minimo && novaQuantidade <= (produtoParaAjuste.estoque_minimo || 0)) { // <-- NOME CORRETO
+        alertas.push({
+          loja_id: lojaAtiva.id,
+          mensagem: `Atenção: O estoque de ${produtoParaAjuste.nome} chegou a ${novaQuantidade} (Mínimo: ${produtoParaAjuste.estoque_minimo}).`, // <-- Troquei 'texto' por 'mensagem'
+          tipo: 'alerta_minimo',
+        });
+      }
+
+      // Se houver algum alerta gerado, envia para a tabela de notificações
+      if (alertas.length > 0) {
+        await supabase.from('notificacoes').insert(alertas);
+        
+        // A MÁGICA 1: Atualiza a bolinha vermelha global com a quantidade de alertas gerados!
+        setUnreadNotifCount(prev => prev + alertas.length);
+      }
+      // ------------------------------------------
+
+      showBanner("Estoque atualizado!", "success"); // <-- Usa o Banner!
       setModalAjusteVisible(false);
-      // Opcional: recarregar lembretes se quiser atualizar o nome/info
       carregarLembretes();
+      setProducts(products.map(p => p.id === produtoParaAjuste.id ? { ...p, estoque_atual: novaQuantidade } : p));
     } else {
-      Alert.alert("Erro", "Não foi possível atualizar o estoque.");
+      showBanner("Não foi possível atualizar o estoque.", "error"); // <-- Usa o Banner!
     }
     setAtualizandoEstoque(false);
   };
 
+  // Calcula quantas tarefas estão concluídas para mostrar no botão
+  const qtdConcluidas = lembretes.filter(l => l.concluido).length;
+
+  // Função para dar identidade visual a cada tipo de aviso
+  const getVisualAviso = (tipo) => {
+    switch (tipo) {
+      case 'alerta_tarefa': 
+        return { icone: 'alarm-outline', corIcone: '#ef4444', corFundo: '#fee2e2' }; // Vermelho (Urgência/Tempo)
+      case 'alerta_minimo': 
+        return { icone: 'warning-outline', corIcone: '#f59e0b', corFundo: '#fef3c7' }; // Amarelo (Atenção/Estoque Baixo)
+      case 'movimentacao': 
+        return { icone: 'swap-horizontal-outline', corIcone: '#3b82f6', corFundo: '#dbeafe' }; // Azul (Ajustes de Estoque)
+      default: 
+        return { icone: 'notifications-outline', corIcone: '#64748b', corFundo: '#f1f5f9' }; // Cinza (Padrão)
+    }
+  };
+  
   return (
     <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
       
+      {/* NOTIFICAÇÃO VISUAL DO BANNER */}
+      {notification.visible && (
+        <View style={[
+          styles.topNotification, 
+          { 
+            backgroundColor: notification.type === 'error' ? 'rgba(244, 67, 54, 0.9)' : 'rgba(76, 175, 80, 0.9)', 
+            zIndex: 999, 
+            top: 20,
+            position: 'absolute', left: 20, right: 20, padding: 15, borderRadius: 8, alignItems: 'center'
+          }
+        ]}>
+          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
+            {notification.message}
+          </Text>
+        </View>
+      )}
+
       {/* CABEÇALHO DINÂMICO */}
       <View style={{ paddingTop: Platform.OS === 'android' ? 40 : 50, paddingBottom: 15, paddingHorizontal: 20, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderColor: '#eee' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -2574,7 +2817,13 @@ const NotificacoesScreen = ({ navigation }) => {
       {/* NOVO: TOGGLE DE ABAS */}
       {!selecionando && (
         <View style={{ flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, marginHorizontal: 20, marginTop: 15, padding: 4 }}>
-          <TouchableOpacity onPress={() => setAbaAtiva('avisos')} style={{ flex: 1, paddingVertical: 8, backgroundColor: abaAtiva === 'avisos' ? '#fff' : 'transparent', borderRadius: 6, alignItems: 'center', elevation: abaAtiva === 'avisos' ? 2 : 0 }}>
+          <TouchableOpacity 
+            onPress={() => {
+              setAbaAtiva('avisos');
+              carregarNotificacoes(); // <-- A MÁGICA 2: Recarrega o banco ao focar na aba!
+            }} 
+            style={{ flex: 1, paddingVertical: 8, backgroundColor: abaAtiva === 'avisos' ? '#fff' : 'transparent', borderRadius: 6, alignItems: 'center', elevation: abaAtiva === 'avisos' ? 2 : 0 }}
+          >
             <Text style={{ fontWeight: abaAtiva === 'avisos' ? 'bold' : '500', color: abaAtiva === 'avisos' ? '#333' : '#64748b' }}>Avisos do Sistema</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setAbaAtiva('afazeres')} style={{ flex: 1, paddingVertical: 8, backgroundColor: abaAtiva === 'afazeres' ? '#fff' : 'transparent', borderRadius: 6, alignItems: 'center', elevation: abaAtiva === 'afazeres' ? 2 : 0 }}>
@@ -2622,9 +2871,12 @@ const NotificacoesScreen = ({ navigation }) => {
                       <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={24} color={isSelected ? "#007AFF" : "#ccc"} />
                     </View>
                   )}
-                  <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: isMinimo ? '#fff3cd' : '#e2e8f0', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                    <Ionicons name={isMinimo ? "warning" : "swap-vertical"} size={20} color={isMinimo ? "#ffc107" : "#64748b"} />
+                  
+                  {/* O ícone e a cor de fundo agora mudam de acordo com o tipo da notificação */}
+                  <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: getVisualAviso(item.tipo).corFundo, justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                    <Ionicons name={getVisualAviso(item.tipo).icone} size={20} color={getVisualAviso(item.tipo).corIcone} />
                   </View>
+
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 14, color: '#333', fontWeight: item.lida ? 'normal' : 'bold' }}>{item.mensagem}</Text>
                   </View>
@@ -2640,78 +2892,73 @@ const NotificacoesScreen = ({ navigation }) => {
       {abaAtiva === 'afazeres' && (
         <View style={{ flex: 1 }}>
           
-          {/* BARRA DE CRIAR RÁPIDA */}
-          <View style={{ paddingHorizontal: 20, paddingTop: 15, paddingBottom: 5, zIndex: 10 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
-                <Ionicons name="add-circle-outline" size={22} color="#64748b" />
-                <TextInput
-                  placeholder="Ex: Fazer inventário..."
-                  placeholderTextColor="#94a3b8"
-                  value={novoLembrete}
-                  onChangeText={setNovoLembrete}
-                  style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }}
-                  onSubmitEditing={handleCriarLembreteRapido}
-                />
+          {/* 1. BARRA DE CRIAR RÁPIDA (Protegida) */}
+          {permissoesAtivas?.gerenciar_tarefas && (
+            <View style={{ paddingHorizontal: 20, paddingTop: 15, paddingBottom: 5, zIndex: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
+                  <Ionicons name="add-circle-outline" size={22} color="#64748b" />
+                  <TextInput
+                    placeholder="Adicione uma tarefa..."
+                    placeholderTextColor="#94a3b8"
+                    value={novoLembrete}
+                    onChangeText={setNovoLembrete}
+                    style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }}
+                    onSubmitEditing={handleCriarLembreteRapido}
+                  />
 
-                {/* BOTÃO DE VINCULAR PRODUTO */}
-                <TouchableOpacity onPress={abrirModalProdutos} style={{ paddingHorizontal: 5 }}>
-                  <Ionicons name="cube" size={22} color={produtoSelecionado ? "#007AFF" : "#94a3b8"} />
-                </TouchableOpacity>
+                  {/* BOTÃO DE VINCULAR PRODUTO */}
+                  <TouchableOpacity onPress={abrirModalProdutos} style={{ paddingHorizontal: 5 }}>
+                    <Ionicons name="cube" size={22} color={produtoSelecionado ? "#007AFF" : "#94a3b8"} />
+                  </TouchableOpacity>
 
-                {/* BOTÃO DO CALENDÁRIO */}
-                <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ paddingHorizontal: 5 }}>
-                  <Ionicons name="calendar" size={22} color={dataLimite ? "#007AFF" : "#94a3b8"} />
+                  {/* BOTÃO DO CALENDÁRIO */}
+                  <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ paddingHorizontal: 5 }}>
+                    <Ionicons name="calendar" size={22} color={dataLimite ? "#007AFF" : "#94a3b8"} />
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  onPress={handleCriarLembreteRapido}
+                  disabled={criandoLembrete || !novoLembrete}
+                  style={{ marginLeft: 10, backgroundColor: (criandoLembrete || !novoLembrete) ? '#a0cbfc' : '#007AFF', width: 48, height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }}
+                >
+                  {criandoLembrete ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={20} color="#fff" />}
                 </TouchableOpacity>
               </View>
+              
+              {/* TEXTO AVISANDO O PRODUTO E A DATA ESCOLHIDA ANTES DE ENVIAR */}
+              {produtoSelecionado && (
+                <Text style={{ color: '#007AFF', fontSize: 12, marginTop: 5, marginLeft: 5, fontWeight: 'bold' }}>
+                  <Ionicons name="cube" size={12} /> Produto: {produtoSelecionado.nome}
+                  <Text onPress={() => setProdutoSelecionado(null)} style={{ color: '#d9534f' }}> (Remover)</Text>
+                </Text>
+              )}
+              {dataLimite && (
+                <Text style={{ color: '#007AFF', fontSize: 12, marginTop: 5, marginLeft: 5, fontWeight: 'bold' }}>
+                  <Ionicons name="calendar" size={12} /> Prazo: {dataLimite.toLocaleDateString('pt-BR')} 
+                  <Text onPress={() => setDataLimite(null)} style={{ color: '#d9534f' }}> (Remover)</Text>
+                </Text>
+              )}
 
-              <TouchableOpacity
-                onPress={handleCriarLembreteRapido}
-                disabled={criandoLembrete || !novoLembrete}
-                style={{ marginLeft: 10, backgroundColor: (criandoLembrete || !novoLembrete) ? '#a0cbfc' : '#007AFF', width: 48, height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }}
-              >
-                {criandoLembrete ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={20} color="#fff" />}
-              </TouchableOpacity>
-            </View>
-            
-            {/* TEXTO AVISANDO O PRODUTO E A DATA ESCOLHIDA ANTES DE ENVIAR */}
-            {produtoSelecionado && (
-              <Text style={{ color: '#007AFF', fontSize: 12, marginTop: 5, marginLeft: 5, fontWeight: 'bold' }}>
-                <Ionicons name="cube" size={12} /> Produto: {produtoSelecionado.nome}
-                <Text onPress={() => setProdutoSelecionado(null)} style={{ color: '#d9534f' }}> (Remover)</Text>
-              </Text>
-            )}
-            {dataLimite && (
-              <Text style={{ color: '#007AFF', fontSize: 12, marginTop: 5, marginLeft: 5, fontWeight: 'bold' }}>
-                <Ionicons name="calendar" size={12} /> Prazo: {dataLimite.toLocaleDateString('pt-BR')} 
-                <Text onPress={() => setDataLimite(null)} style={{ color: '#d9534f' }}> (Remover)</Text>
-              </Text>
-            )}
+              {/* O MODAL DO CALENDÁRIO INVISÍVEL */}
+              {showDatePicker && (
+                <DateTimePicker
+                  value={dataLimite || new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={onChangeDate}
+                />
+              )}
 
-            {/* O MODAL DO CALENDÁRIO INVISÍVEL */}
-            {showDatePicker && (
-              <DateTimePicker
-                value={dataLimite || new Date()}
-                mode="date"
-                display="default"
-                onChange={onChangeDate}
+              {/* EFEITO DEGRADÊ (FUMAÇA) */}
+              <LinearGradient
+                colors={['#f5f5f5', 'rgba(245, 245, 245, 0)']}
+                style={{ position: 'absolute', left: 0, right: 0, bottom: -20, height: 20, zIndex: 10 }}
+                pointerEvents="none"
               />
-            )}
-
-            {/* EFEITO DEGRADÊ (FUMAÇA) */}
-            <LinearGradient
-              colors={['#f5f5f5', 'rgba(245, 245, 245, 0)']}
-              style={{ 
-                position: 'absolute', 
-                left: 0, 
-                right: 0, 
-                bottom: -20, 
-                height: 20, 
-                zIndex: 10 
-              }}
-              pointerEvents="none"
-            />
-          </View>
+            </View>
+          )}
 
           {/* LISTA DE TAREFAS */}
           {loadingLembretes ? (
@@ -2726,10 +2973,28 @@ const NotificacoesScreen = ({ navigation }) => {
              <FlatList
                data={lembretes}
                keyExtractor={item => item.id.toString()}
-               contentContainerStyle={{ padding: 15 }}
+               contentContainerStyle={{ padding: 15, paddingBottom: 100 }}
+               
+               // 2. BOTÃO DE LIMPAR (Protegido)
+               ListFooterComponent={() => {
+                 if (qtdConcluidas === 0 || !permissoesAtivas?.gerenciar_tarefas) return null; 
+                 
+                 return (
+                   <TouchableOpacity 
+                     onPress={handleLimparConcluidas}
+                     style={{ marginTop: 20, marginBottom: 10, padding: 15, backgroundColor: '#fff', borderRadius: 10, alignItems: 'center', borderWidth: 1, borderColor: '#fca5a5', borderStyle: 'dashed' }}
+                   >
+                     <Text style={{ color: '#ef4444', fontWeight: 'bold' }}>
+                       <Ionicons name="trash-bin-outline" size={16} /> Limpar {qtdConcluidas} {qtdConcluidas === 1 ? 'tarefa concluída' : 'tarefas concluídas'}
+                     </Text>
+                   </TouchableOpacity>
+                 );
+               }}
+
                renderItem={({ item }) => (
                   <View style={{ backgroundColor: item.concluido ? '#f8f9fa' : '#fff', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: item.concluido ? '#eee' : '#e2e8f0', elevation: item.concluido ? 0 : 1, borderLeftWidth: item.concluido ? 1 : 4, borderLeftColor: getCorPrioridadeAutomatica(item.data_limite, item.concluido) }}>
                      
+                     {/* CHECKBOX (Livre para todos clicarem) */}
                      <TouchableOpacity onPress={() => toggleConcluido(item)} style={{ marginRight: 15 }}>
                         <Ionicons name={item.concluido ? "checkmark-circle" : "ellipse-outline"} size={28} color={item.concluido ? "#4CAF50" : "#ccc"} />
                      </TouchableOpacity>
@@ -2737,34 +3002,49 @@ const NotificacoesScreen = ({ navigation }) => {
                      <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 15, color: item.concluido ? '#999' : '#333', textDecorationLine: item.concluido ? 'line-through' : 'none', fontWeight: item.concluido ? 'normal' : '500' }}>{item.texto}</Text>
                         
-                        {/* PRAZO CLICÁVEL COM COR DINÂMICA DA PRIORIDADE */}
+                        {/* 3. PRAZO CLICÁVEL (Protegido) */}
                         <TouchableOpacity 
                           onPress={() => {
-                            setLembreteEditandoData(item);
-                            setShowDatePicker(true);
+                            if (permissoesAtivas?.gerenciar_tarefas) {
+                              setLembreteEditandoData(item);
+                              setShowDatePicker(true);
+                            } else {
+                              showBanner("Sem permissão para alterar prazos.", "error");
+                            }
                           }}
                           style={{ marginTop: 4 }}
+                          activeOpacity={permissoesAtivas?.gerenciar_tarefas ? 0.2 : 1}
                         >
-                          <Text style={{ 
-                            fontSize: 12, 
-                            // Se não tiver prazo ou estiver concluído = Cinza
-                            // Caso contrário, usa a cor exata da prioridade calculada!
-                            color: (!item.data_limite || item.concluido) 
-                              ? '#94a3b8' 
-                              : getCorPrioridadeAutomatica(item.data_limite, item.concluido), 
-                            fontWeight: 'bold' 
-                          }}>
+                          <Text style={{ fontSize: 12, color: (!item.data_limite || item.concluido) ? '#94a3b8' : getCorPrioridadeAutomatica(item.data_limite, item.concluido), fontWeight: 'bold' }}>
                             <Ionicons name="calendar-outline" size={12} /> Prazo: {item.data_limite ? new Date(item.data_limite).toLocaleDateString('pt-BR') : "Não definido"}
-                            
-                            {(item.data_limite && new Date(item.data_limite) < new Date() && !item.concluido) && " (Atrasado)"}
+                            {isAtrasado(item.data_limite, item.concluido) && " (Atrasado)"}
                           </Text>
                         </TouchableOpacity>
 
-                        {/* ETIQUETA DO PRODUTO VINCULADO (AJUSTE DIRETO) */}
+                        {/* ETIQUETA DO PRODUTO (Protegida pela permissão de quantidades) */}
                         {item.produto_id && item.nome_produto && (
                           <TouchableOpacity 
-                            onPress={() => abrirAjusteRapido(item.produto_id)}
-                            style={{ marginTop: 8, backgroundColor: item.concluido ? '#f8f9fa' : '#f0f7ff', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: item.concluido ? '#eee' : '#cce4ff' }}
+                            onPress={() => {
+                              // VERIFICAÇÃO: Só abre o ajuste se o usuário puder mexer em quantidades
+                              if (permissoesAtivas?.quantidades) {
+                                abrirAjusteRapido(item.produto_id);
+                              } else {
+                                showBanner("Sem permissão para alterar o estoque.", "error");
+                              }
+                            }} 
+                            style={{ 
+                              marginTop: 8, 
+                              backgroundColor: item.concluido ? '#f8f9fa' : '#f0f7ff', 
+                              paddingVertical: 4, 
+                              paddingHorizontal: 8, 
+                              borderRadius: 6, 
+                              alignSelf: 'flex-start', 
+                              flexDirection: 'row', 
+                              alignItems: 'center', 
+                              borderWidth: 1, 
+                              borderColor: item.concluido ? '#eee' : '#cce4ff' 
+                            }}
+                            activeOpacity={permissoesAtivas?.quantidades ? 0.2 : 1}
                           >
                             <Ionicons name="cube-outline" size={14} color={item.concluido ? '#999' : '#007AFF'} style={{ marginRight: 4 }} />
                             <Text style={{ fontSize: 12, color: item.concluido ? '#999' : '#007AFF', fontWeight: '600' }}>{item.nome_produto}</Text>
@@ -2779,9 +3059,12 @@ const NotificacoesScreen = ({ navigation }) => {
                         )}
                      </View>
 
-                     <TouchableOpacity onPress={() => apagarLembrete(item.id)} style={{ padding: 5 }}>
-                        <Ionicons name="trash-outline" size={22} color="#d9534f" />
-                     </TouchableOpacity>
+                     {/* 4. LIXEIRA (Protegida) */}
+                     {permissoesAtivas?.gerenciar_tarefas && (
+                       <TouchableOpacity onPress={() => apagarLembrete(item.id)} style={{ padding: 5 }}>
+                          <Ionicons name="trash-outline" size={22} color="#d9534f" />
+                       </TouchableOpacity>
+                     )}
                   </View>
                )}
              />
@@ -2902,6 +3185,7 @@ const NotificacoesScreen = ({ navigation }) => {
                 value={String(novaQuantidade)}
                 onChangeText={(txt) => setNovaQuantidade(Number(txt.replace(/[^0-9]/g, '')))}
                 style={{ fontSize: 32, fontWeight: 'bold', marginHorizontal: 30, color: '#007AFF', textAlign: 'center', width: 80 }}
+                selectTextOnFocus={true} // <-- A MÁGICA AQUI TAMBÉM!
               />
 
               <TouchableOpacity 
@@ -2932,6 +3216,47 @@ const NotificacoesScreen = ({ navigation }) => {
 
           </View>
         </View>
+      </Modal>
+
+      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO (PADRÃO DO APP) */}
+      <Modal visible={modalConfirmarLimpeza} transparent={true} animationType="fade">
+        <TouchableOpacity 
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+          activeOpacity={1}
+          onPress={() => setModalConfirmarLimpeza(false)}
+        >
+          <TouchableWithoutFeedback>
+            <View style={{ backgroundColor: '#fff', borderRadius: 15, width: '85%', padding: 25, elevation: 10 }}>
+              
+              <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                <View style={{ backgroundColor: '#fee2e2', padding: 15, borderRadius: 50, marginBottom: 15 }}>
+                  <Ionicons name="trash" size={30} color="#ef4444" />
+                </View>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333', textAlign: 'center' }}>Limpar Tarefas</Text>
+                <Text style={{ fontSize: 14, color: '#64748b', textAlign: 'center', marginTop: 10, lineHeight: 20 }}>
+                  Tem certeza que deseja apagar permanentemente todas as tarefas concluídas? Esta ação não pode ser desfeita.
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
+                <TouchableOpacity 
+                  onPress={() => setModalConfirmarLimpeza(false)}
+                  style={{ flex: 1, backgroundColor: '#e2e8f0', padding: 15, borderRadius: 8, alignItems: 'center', marginRight: 10 }}
+                >
+                  <Text style={{ color: '#64748b', fontWeight: 'bold' }}>Cancelar</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  onPress={executarLimpezaDefinitiva}
+                  style={{ flex: 1, backgroundColor: '#ef4444', padding: 15, borderRadius: 8, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: 'bold' }}>Limpar</Text>
+                </TouchableOpacity>
+              </View>
+
+            </View>
+          </TouchableWithoutFeedback>
+        </TouchableOpacity>
       </Modal>
 
     </View>
@@ -3057,13 +3382,13 @@ const MainAppDrawer = () => {
       if (lojaAtiva.dono_id === user.id) {
         setPermissoesAtivas({
           quantidades: true, adicionar: true, editar: true, gerenciar: true, 
-          gerenciar_avisos: true // <-- 1. Adicionado para o dono
+          gerenciar_avisos: true, gerenciar_tarefas: true // <-- Permissão master do dono
         });
       } else {
         const { data } = await supabase
           .from('equipe')
-          // 2. Adicionado na busca do banco:
-          .select('perm_editar_quantidades, perm_adicionar_produto, perm_editar_produto, perm_gerenciar_membros, perm_gerenciar_avisos') 
+          // Puxa a nova coluna do banco
+          .select('perm_editar_quantidades, perm_adicionar_produto, perm_editar_produto, perm_gerenciar_membros, perm_gerenciar_avisos, perm_gerenciar_tarefas') 
           .eq('loja_id', lojaAtiva.id)
           .eq('usuario_id', user.id)
           .maybeSingle();
@@ -3074,7 +3399,8 @@ const MainAppDrawer = () => {
             adicionar: data.perm_adicionar_produto,
             editar: data.perm_editar_produto,
             gerenciar: data.perm_gerenciar_membros,
-            gerenciar_avisos: data.perm_gerenciar_avisos // <-- 3. Salvo no estado global
+            gerenciar_avisos: data.perm_gerenciar_avisos,
+            gerenciar_tarefas: data.perm_gerenciar_tarefas // <-- Salva no estado global
           });
         }
       }
