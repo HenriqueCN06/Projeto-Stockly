@@ -1,4 +1,3 @@
-// Adicione esta linha no TOPO ABSOLUTO do arquivo
 import 'react-native-gesture-handler'; 
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -75,10 +74,8 @@ const LoginScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // NOVO: Estado unificado para a notificação
   const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
 
-  // NOVO: Função para exibir o banner
   const showBanner = (message, type) => {
     setNotification({ visible: true, message, type });
     setTimeout(() => {
@@ -104,7 +101,6 @@ const LoginScreen = ({ navigation }) => {
     if (error) {
       let errorMessage = error.message;
       
-      // Traduzindo os erros mais comuns de login para português
       if (errorMessage.includes("Invalid login credentials")) {
         errorMessage = "E-mail ou senha incorretos.";
       } else if (errorMessage.toLowerCase().includes("invalid email")) {
@@ -115,18 +111,16 @@ const LoginScreen = ({ navigation }) => {
 
       showBanner(errorMessage, "error");
       setLoading(false);
-      return; // Para a execução aqui se der erro
+      return;
     }
     
-    // Se der sucesso, não precisamos de banner porque o app 
-    // vai pular para o Dashboard instantaneamente!
     setLoading(false);
   };
 
   return (
     <View style={styles.loginContainer}>
       
-      {/* NOVO: Notificação Dinâmica (Fundo 50% opacidade e Texto Escuro) */}
+      {/* Notificação Dinâmica (Fundo 50% opacidade e Texto Escuro) */}
       {notification.visible && (
         <View style={[
           styles.topNotification, 
@@ -191,7 +185,6 @@ const SignUpScreen = ({ navigation }) => {
   const [showSenha, setShowSenha] = useState(false);
   const [showConfirmaSenha, setShowConfirmaSenha] = useState(false);
   
-  // NOVO: Estado unificado para controlar todas as notificações (Sucesso e Erro)
   const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
 
   // Função auxiliar para exibir o banner e escondê-lo automaticamente
@@ -210,8 +203,6 @@ const SignUpScreen = ({ navigation }) => {
       return;
     }
 
-    // 2. Validação RÁPIDA de formato de e-mail (Não gasta requisição do Supabase!)
-    // Verifica se tem texto, uma "@", mais texto, um "." e mais texto no final
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       showBanner("Email inválido.", "error");
@@ -236,7 +227,6 @@ const SignUpScreen = ({ navigation }) => {
     if (error) {
       let errorMessage = error.message;
       
-      // Traduzindo os erros para português (usando toLowerCase para ser mais flexível)
       if (errorMessage.includes("Password should be at least 6 characters")) {
         errorMessage = "A senha deve ter no mínimo 6 caracteres.";
       } else if (errorMessage.includes("User already registered")) {
@@ -261,7 +251,6 @@ const SignUpScreen = ({ navigation }) => {
     setLoading(false);
     showBanner("Conta criada com sucesso!", "success");
     
-    // Aguarda 2 segundos e manda pro login
     setTimeout(() => {
       navigation.navigate('Login');
     }, 2000); 
@@ -270,7 +259,7 @@ const SignUpScreen = ({ navigation }) => {
   return (
     <View style={styles.loginContainer}>
       
-      {/* NOVO: Notificação Dinâmica (Fundo 50% e Texto Escuro) */}
+      {/* Notificação Dinâmica (Fundo 50% e Texto Escuro) */}
       {notification.visible && (
         <View style={[
           styles.topNotification, 
@@ -278,7 +267,6 @@ const SignUpScreen = ({ navigation }) => {
         ]}>
           <Text style={[
             styles.topNotificationText,
-            // NOVO: Cor da letra dinâmica e escura para dar contraste
             { color: notification.type === 'error' ? '#7f1d1d' : '#14532d' }
           ]}>
             {notification.message}
@@ -376,14 +364,11 @@ const EmptyScreen = ({ navigation }) => {
         scrollY.setValue(0);
         setSearchQuery('');
         
-        // 2. Liga a tela de loading de forma estável
         setLoadingProducts(true);
 
-        // 3. Busca quem é o usuário (Rápido)
         const { data: { user } } = await supabase.auth.getUser();
         if (user) setMeuId(user.id);
 
-        // 4. Busca os Produtos e a Contagem de Avisos SIMULTANEAMENTE (Performance Turbo)
         const promiseNotificacoes = supabase
           .from('notificacoes')
           .select('*', { count: 'exact', head: true })
@@ -399,11 +384,9 @@ const EmptyScreen = ({ navigation }) => {
 
         const [resNotificacoes, resProdutos] = await Promise.all([promiseNotificacoes, promiseProdutos]);
 
-        // 5. Aplica os resultados na tela de uma só vez
         if (resNotificacoes.count !== null) setUnreadNotifCount(resNotificacoes.count);
         if (resProdutos.data) setProducts(resProdutos.data);
 
-        // 6. Desliga o loading (A tela surge pronta e completa)
         setLoadingProducts(false);
       };
 
@@ -447,8 +430,8 @@ const EmptyScreen = ({ navigation }) => {
     if (produtoParaEditarId && products.length > 0) {
       const prod = products.find(p => p.id === produtoParaEditarId);
       if (prod) {
-        abrirModalEdicao(prod); // Abre o modal de edição corretamente
-        setProdutoParaEditarId(null); // Limpa a ponte para não abrir de novo sozinho
+        abrirModalEdicao(prod);
+        setProdutoParaEditarId(null);
       }
     }
   }, [produtoParaEditarId, products]);
@@ -457,7 +440,7 @@ const EmptyScreen = ({ navigation }) => {
     setNotification({ visible: true, message, type });
     setTimeout(() => {
       setNotification({ visible: false, message: '', type: 'success' });
-    }, 3000); // Some sozinho após 3 segundos
+    }, 3000);
   };
 
   const openScanner = async () => {
@@ -475,7 +458,6 @@ const EmptyScreen = ({ navigation }) => {
     setIsScanning(false);
     setSku(data); 
     
-    // Trocamos o Alert.alert por isto:
     showBanner(`Código lido: ${data}`, "success"); 
   };
 
@@ -486,7 +468,7 @@ const EmptyScreen = ({ navigation }) => {
   const scrollYClamped = Animated.diffClamp(scrollY, 0, SEARCH_BAR_HEIGHT);
   const searchBarTranslateY = scrollYClamped.interpolate({
     inputRange: [0, SEARCH_BAR_HEIGHT],
-    outputRange: [0, -SEARCH_BAR_HEIGHT], // Empurra a barra para cima
+    outputRange: [0, -SEARCH_BAR_HEIGHT],
   });
 
   const [produtoEditando, setProdutoEditando] = useState(null);
@@ -582,7 +564,6 @@ const EmptyScreen = ({ navigation }) => {
       const skuFinal = sku.trim() === '' ? `INT-${Date.now()}` : sku.trim();
 
       if (produtoEditando) {
-        // --- CENÁRIO A: EDIÇÃO DE PRODUTO QUE JÁ ESTÁ NA TELA ---
         const { data, error } = await supabase.from('produtos').update({
             nome: nome, sku_barcode: skuFinal, preco_custo: custoNum, preco_venda: vendaNum, estoque_atual: atualNum, estoque_minimo: minNum, notificar_minimo: notificarMinimo, notificar_movimentacao: notificarMovimentacao
           }).eq('id', produtoEditando.id).select().single();
@@ -599,7 +580,6 @@ const EmptyScreen = ({ navigation }) => {
             observacao: 'Edição manual (Janela)'
           }]);
 
-          // 2. NOVO: Motor de Notificações para a janela de edição
           const notificacoes = [];
 
           if (notificarMovimentacao) {
@@ -628,7 +608,6 @@ const EmptyScreen = ({ navigation }) => {
         setProducts(products.map(p => p.id === produtoEditando.id ? data : p));
 
       } else {
-        // --- CENÁRIO B: TENTATIVA DE CRIAR UM NOVO PRODUTO ---
         
         // 1. Busca se esse SKU já existe nesta loja (ativo ou inativo)
         const { data: produtoExistente, error: errorBusca } = await supabase
@@ -647,7 +626,6 @@ const EmptyScreen = ({ navigation }) => {
             setLoading(false);
             return;
           } else {
-            // RESSURREIÇÃO: O produto existia, foi apagado e agora está voltando
             const { data: ressuscitado, error: errorRessuscitar } = await supabase
               .from('produtos')
               .update({
@@ -656,7 +634,7 @@ const EmptyScreen = ({ navigation }) => {
                 preco_venda: vendaNum,
                 estoque_atual: atualNum,
                 estoque_minimo: minNum,
-                ativo: true, // Traz de volta à vida!
+                ativo: true,
                 notificar_minimo: notificarMinimo,
                 notificar_movimentacao: notificarMovimentacao
               })
@@ -710,7 +688,6 @@ const EmptyScreen = ({ navigation }) => {
   const confirmarApagarProduto = async () => {
     setLoading(true);
     try {
-      // 1. NOVO: Se o produto tinha estoque, registra a SAÍDA no histórico antes de inativar
       if (produtoEditando.estoque_atual > 0) {
         await supabase.from('movimentacoes').insert([{
           produto_id: produtoEditando.id,
@@ -721,7 +698,6 @@ const EmptyScreen = ({ navigation }) => {
         }]);
       }
 
-      // 2. A MÁGICA: Em vez de .delete(), fazemos um .update() para inativar e zerar o estoque no banco
       const { error } = await supabase
         .from('produtos')
         .update({ ativo: false, estoque_atual: 0 })
@@ -767,10 +743,8 @@ const EmptyScreen = ({ navigation }) => {
       }]);
       if (errorMov) throw errorMov;
 
-      // 3. NOVO: MOTOR DE NOTIFICAÇÕES
       const notificacoes = [];
 
-      // A) Regra da Movimentação (Gera aviso se a chave estiver ligada)
       if (produto.notificar_movimentacao) {
         notificacoes.push({
           loja_id: lojaAtiva.id,
@@ -780,7 +754,6 @@ const EmptyScreen = ({ navigation }) => {
         });
       }
 
-      // B) Regra do Estoque Mínimo (Gera aviso apenas se foi uma SAÍDA e atingiu o limite)
       if (produto.notificar_minimo && mudanca < 0 && novoEstoque <= produto.estoque_minimo) {
         notificacoes.push({
           loja_id: lojaAtiva.id,
@@ -794,7 +767,7 @@ const EmptyScreen = ({ navigation }) => {
       if (notificacoes.length > 0) {
         const { error: errorNotif } = await supabase.from('notificacoes').insert(notificacoes);
         if (errorNotif) console.log("Erro ao gerar notificação:", errorNotif);
-        else setUnreadNotifCount(prev => prev + notificacoes.length); // <-- ADICIONE ESTA LINHA
+        else setUnreadNotifCount(prev => prev + notificacoes.length);
       }
 
     } catch (error) {
@@ -866,7 +839,7 @@ const EmptyScreen = ({ navigation }) => {
       <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
         
         
-{/* --- NOVO: NOTIFICAÇÃO VISUAL DO BANNER --- */}
+{/* --- NOTIFICAÇÃO VISUAL DO BANNER --- */}
         {notification.visible && (
           <View style={[
             styles.topNotification, 
@@ -888,12 +861,12 @@ const EmptyScreen = ({ navigation }) => {
 
         {/* --- BARRA DE PESQUISA FIXA NO TOPO --- */}
         <View style={{ 
-          position: 'absolute', // <-- Faz a barra flutuar sobre a tela
+          position: 'absolute',
           top: 0, left: 0, right: 0, 
           paddingHorizontal: 15, 
           paddingTop: 15, 
           paddingBottom: 10, 
-          backgroundColor: 'transparent', // <-- Fundo invisível
+          backgroundColor: 'transparent',
           zIndex: 10 
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -938,11 +911,9 @@ const EmptyScreen = ({ navigation }) => {
             </View>
           ) : (
             
-            // AGORA É UMA FLATLIST NORMAL (Sem a barra dentro dela)
             <FlatList
               data={processedProducts}
               keyExtractor={(item) => item.id.toString()}
-              // O paddingTop foi aumentado para 85 para o primeiro item não ficar escondido
               contentContainerStyle={{ paddingHorizontal: 15, paddingBottom: 15, paddingTop: 75 }}
               
               renderItem={({ item }) => (
@@ -971,7 +942,7 @@ const EmptyScreen = ({ navigation }) => {
                           onChangeText={setTempStockValue}
                           keyboardType="numeric"
                           autoFocus={true} // Já abre o teclado automaticamente
-                          selectTextOnFocus={true} // <-- A MÁGICA: Seleciona todo o texto ao focar!
+                          selectTextOnFocus={true}
                           onBlur={() => handleSalvarEstoqueInline(item)} // O onBlur será o único responsável por salvar
                           onSubmitEditing={() => Keyboard.dismiss()} // O Enter apenas fecha o teclado (o que vai acionar o onBlur automaticamente)
                         />
@@ -1051,7 +1022,7 @@ const EmptyScreen = ({ navigation }) => {
           {/* Espaço invisível na extrema esquerda */}
           <View style={{ width: 60 }} />
 
-          {/* NOVO: Botão de Equipe (Acessos) */}
+          {/* Botão de Equipe (Acessos) */}
           <TouchableOpacity onPress={() => navigation.navigate('Equipe')} style={{ width: 60, alignItems: 'center', justifyContent: 'center' }}>
             <Ionicons name="people-outline" size={28} color="#555" />
             <Text style={{ fontSize: 10, color: '#555', marginTop: 2, fontWeight: 'bold' }}>Equipe</Text>
@@ -1108,7 +1079,6 @@ const EmptyScreen = ({ navigation }) => {
                 shadowOffset: { width: 0, height: 5 },
                 shadowOpacity: 0.3,
                 shadowRadius: 10,
-                // Mantém a funcionalidade de subir a janela quando o teclado aparece
                 transform: [{ translateY: keyboardOffset }] 
               }}>
                 
@@ -1148,7 +1118,6 @@ const EmptyScreen = ({ navigation }) => {
                       placeholderTextColor="#999" 
                       value={estoqueAtual} 
                       onChangeText={setEstoqueAtual} 
-                      // NOVO: Trava de segurança + Feedback visual (fica cinza se não puder editar)
                       editable={!produtoEditando || permissoesAtivas?.quantidades}
                       style={[
                         styles.input, 
@@ -1275,7 +1244,6 @@ const CustomDrawerContent = (props) => {
   const [loading, setLoading] = useState(false);
   
 
-  // NOVO: Estados para o Menu Flutuante (Opções) e Renomear
   const [estoqueOpcoes, setEstoqueOpcoes] = useState(null); // Guarda qual estoque foi clicado
   const [modalOpcoesVisible, setModalOpcoesVisible] = useState(false);
   const [modalRenomearVisible, setModalRenomearVisible] = useState(false);
@@ -1310,18 +1278,16 @@ const CustomDrawerContent = (props) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       
-      // NOVO: Calcula a próxima ordem (maior ordem atual + 1)
       const proximaOrdem = lojas.length > 0 ? Math.max(...lojas.map(l => l.ordem || 0)) + 1 : 1;
 
       const { data, error } = await supabase
         .from('lojas')
-        .insert([{ nome: nomeEstoque, dono_id: user.id, ordem: proximaOrdem }]) // <--- NOVO: Insere a ordem
+        .insert([{ nome: nomeEstoque, dono_id: user.id, ordem: proximaOrdem }])
         .select()
         .single();
         
       if (error) throw error;
 
-      // NOVO: Adiciona a nova loja e reordena a lista localmente
       const novasLojas = [...lojas, data].sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
       setLojas(novasLojas);
       setLojaAtiva(data); 
@@ -1336,7 +1302,6 @@ const CustomDrawerContent = (props) => {
     }
   };
 
-  // NOVO: Função para Renomear
   const handleRenomear = async () => {
     if (novoNome.trim() === '') return;
     setLoading(true);
@@ -1354,7 +1319,6 @@ const CustomDrawerContent = (props) => {
       const novasLojas = lojas.map(l => l.id === estoqueOpcoes.id ? data : l);
       setLojas(novasLojas);
       
-      // Se ele renomeou o estoque que está aberto agora, atualiza o cabeçalho também
       if (lojaAtiva?.id === estoqueOpcoes.id) {
         setLojaAtiva(data);
       }
@@ -1367,11 +1331,9 @@ const CustomDrawerContent = (props) => {
     }
   };
 
-  // NOVO: Função para Apagar (Agora limpa os produtos primeiro!)
   const handleApagar = async () => {
     setLoading(true);
     try {
-      // 1. A MÁGICA: Apaga todos os produtos dessa loja primeiro para o Supabase não bloquear!
       await supabase.from('produtos').delete().eq('loja_id', estoqueOpcoes.id);
       
       // 2. Agora sim, apaga a loja tranquilamente
@@ -1382,7 +1344,6 @@ const CustomDrawerContent = (props) => {
       const novasLojas = lojas.filter(l => l.id !== estoqueOpcoes.id);
       setLojas(novasLojas);
       
-      // 4. Se a loja apagada era a que estava aberta na tela, joga o usuário para outra loja
       if (lojaAtiva?.id === estoqueOpcoes.id) {
         setLojaAtiva(novasLojas.length > 0 ? novasLojas[0] : null);
       }
@@ -1395,7 +1356,6 @@ const CustomDrawerContent = (props) => {
     }
   };
 
-  // NOVO: Função para mover o estoque para cima ou para baixo
   const moverEstoque = async (direcao) => {
     if (!estoqueOpcoes) return;
 
@@ -1504,7 +1464,7 @@ const CustomDrawerContent = (props) => {
         setLojaAtiva(lojas.length > 0 ? lojas[0] : (novasCompartilhadas.length > 0 ? novasCompartilhadas[0] : null));
       }
 
-      setModalSairVisible(false); // <-- AGORA FECHA O NOVO MODAL
+      setModalSairVisible(false);
       Alert.alert("Sucesso", "Você saiu do estoque compartilhado.");
     } catch (error) {
       Alert.alert("Erro ao sair", error.message);
@@ -1544,7 +1504,7 @@ const CustomDrawerContent = (props) => {
         </View>
       </Modal>
 
-      {/* 2. NOVO: Modal do Menu Flutuante (Opções) */}
+      {/* 2. Modal do Menu Flutuante (Opções) */}
       <Modal visible={modalOpcoesVisible} transparent={true} animationType="fade">
         <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setModalOpcoesVisible(false)}>
           <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '75%', overflow: 'hidden' }}>
@@ -1577,7 +1537,7 @@ const CustomDrawerContent = (props) => {
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 18 }} 
                 onPress={() => {
                   setModalOpcoesVisible(false);
-                  setTimeout(() => setModalSairVisible(true), 100); // Abre o novo Modal bonitão
+                  setTimeout(() => setModalSairVisible(true), 100);
                 }}
               >
                 <Ionicons name="log-out-outline" size={22} color="#d9534f" style={{ marginRight: 8 }} />
@@ -1588,7 +1548,7 @@ const CustomDrawerContent = (props) => {
         </TouchableOpacity>
       </Modal>
 
-      {/* 3. NOVO: Modal de Renomear Estoque */}
+      {/* 3. Modal de Renomear Estoque */}
       <Modal visible={modalRenomearVisible} transparent={true} animationType="fade">
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
           <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 12 }}>
@@ -1658,7 +1618,7 @@ const CustomDrawerContent = (props) => {
         </View>
       </Modal>
 
-      {/* 5. NOVO: Modal de Confirmar Saída */}
+      {/* 5. Modal de Confirmar Saída */}
       <Modal visible={modalSairVisible} transparent={true} animationType="fade">
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
           <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '85%', overflow: 'hidden' }}>
@@ -1820,7 +1780,6 @@ const EquipeScreen = ({ navigation }) => {
         
         // Ordena a lista: Gerentes primeiro, depois ordem alfabética
         outrosMembros.sort((a, b) => {
-          // 1º Critério: Hierarquia (Quem gerencia vem antes)
           if (a.perm_gerenciar_membros && !b.perm_gerenciar_membros) return -1;
           if (!a.perm_gerenciar_membros && b.perm_gerenciar_membros) return 1;
           
@@ -2077,7 +2036,6 @@ const EquipeScreen = ({ navigation }) => {
               const fundoDestaque = item.isOwner ? '#fff3cd' : (isGerente ? '#e8f5e9' : '#f0f7ff');
               
               // 3. Lógica do Círculo da Foto
-              // Se for "Eu", o fundo é a cor forte. Se não, é o tom pastel.
               const fundoIcone = souEu ? corDestaque : (item.isOwner ? '#fff3cd' : (isGerente ? '#e8f5e9' : '#e6f2ff'));
               const corTextoIcone = souEu ? '#fff' : corDestaque;
 
@@ -2291,9 +2249,8 @@ const NotificacoesScreen = ({ navigation }) => {
   const [novaQuantidade, setNovaQuantidade] = useState(0);
   const [atualizandoEstoque, setAtualizandoEstoque] = useState(false);
 
-  // --- NOVO: ESTADOS DE NOTIFICAÇÃO (BANNER E MODAL) ---
   const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
-  const [modalConfirmarLimpeza, setModalConfirmarLimpeza] = useState(false); // <-- ADICIONADO AQUI NA TELA CERTA
+  const [modalConfirmarLimpeza, setModalConfirmarLimpeza] = useState(false);
   
   const showBanner = (message, type = 'success') => {
     setNotification({ visible: true, message, type });
@@ -2400,7 +2357,6 @@ const NotificacoesScreen = ({ navigation }) => {
       hoje.setHours(0, 0, 0, 0);
 
       const lembretesComNomes = lembretesData.map(l => {
-        // Motor de tempo (Com separação entre HOJE e ATRASADA)
         if (!l.concluido && l.data_limite) {
           const limite = new Date(l.data_limite);
 
@@ -2471,14 +2427,12 @@ const NotificacoesScreen = ({ navigation }) => {
           if (!a.data_limite && b.data_limite) return 1;  
 
           if (a.data_limite && b.data_limite) {
-            // A MÁGICA: Zera as horas para comparar apenas os dias (Ontem > Hoje > Amanhã)
             const dataA = new Date(a.data_limite); dataA.setHours(0, 0, 0, 0);
             const dataB = new Date(b.data_limite); dataB.setHours(0, 0, 0, 0);
             
             if (dataA.getTime() !== dataB.getTime()) {
               return dataA.getTime() - dataB.getTime();
             }
-            // Desempate se caírem no mesmo dia: a mais recente fica no topo
             return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
           }
           return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -2531,13 +2485,13 @@ const NotificacoesScreen = ({ navigation }) => {
       texto: novoLembrete.trim(),
       criador_id: user.id,
       data_limite: dataLimite ? dataLimite.toISOString() : null,
-      produto_id: produtoSelecionado ? produtoSelecionado.id : null // <-- Envia o vínculo!
+      produto_id: produtoSelecionado ? produtoSelecionado.id : null
     }]);
 
     if (!error) {
       setNovoLembrete('');
       setDataLimite(null);
-      setProdutoSelecionado(null); // <-- Limpa após criar
+      setProdutoSelecionado(null);
       carregarLembretes();
     } else {
       console.log("ERRO AO CRIAR TAREFA:", error);
@@ -2549,7 +2503,6 @@ const NotificacoesScreen = ({ navigation }) => {
   const onChangeDate = async (event, selectedDate) => {
     setShowDatePicker(false);
     
-    // A MÁGICA DA CORREÇÃO: Se o usuário cancelar ou a data falhar, limpa a memória fantasma!
     if (event.type === 'dismissed' || !selectedDate) {
       setLembreteEditandoData(null); 
       return;
@@ -2574,7 +2527,6 @@ const NotificacoesScreen = ({ navigation }) => {
         Alert.alert("Erro", "Não foi possível atualizar o prazo.");
         carregarLembretes();
       } else {
-        // A MÁGICA: Atualizou com sucesso? Roda o radar imediatamente para ele ver a nova data e disparar os avisos!
         carregarLembretes(); 
       }
       
@@ -2592,7 +2544,7 @@ const NotificacoesScreen = ({ navigation }) => {
     if (!dataLimite) return '#e2e8f0'; // Sem prazo fica com a cor padrão do card
 
     const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0); // Zera as horas para comparar apenas os dias
+    hoje.setHours(0, 0, 0, 0);
     
     const prazo = new Date(dataLimite);
     prazo.setHours(0, 0, 0, 0);
@@ -2611,12 +2563,12 @@ const NotificacoesScreen = ({ navigation }) => {
     if (concluido || !dataLimite) return false;
     
     const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0); // Zera o relógio para a meia-noite de hoje
+    hoje.setHours(0, 0, 0, 0);
     
     const prazo = new Date(dataLimite);
     prazo.setHours(0, 0, 0, 0); // Zera o relógio do prazo
     
-    return prazo < hoje; // Só é atrasado se o dia já tiver ficado para trás
+    return prazo < hoje;
   };
 
   const toggleConcluido = async (tarefa) => {
@@ -2657,15 +2609,15 @@ const NotificacoesScreen = ({ navigation }) => {
     // Busca os dados frescos e as configurações de notificação do produto
     const { data, error } = await supabase
       .from('produtos')
-      .select('id, nome, estoque_atual, estoque_minimo, notificar_minimo, notificar_movimentacao') // <-- NOMES CORRETOS!
+      .select('id, nome, estoque_atual, estoque_minimo, notificar_minimo, notificar_movimentacao')
       .eq('id', produtoId)
       .single();
 
-    if (error) console.log("Erro ao buscar produto:", error); // Adicionado para avisar se der erro!
+    if (error) console.log("Erro ao buscar produto:", error);
 
     if (data) {
       setProdutoParaAjuste(data);
-      setNovaQuantidade(data.estoque_atual || 0); // <-- CORRIGIDO AQUI TAMBÉM
+      setNovaQuantidade(data.estoque_atual || 0);
       setModalAjusteVisible(true);
     }
   };
@@ -2700,19 +2652,19 @@ const NotificacoesScreen = ({ navigation }) => {
       const alertas = [];
       
       // 1. Verifica se tem Alerta de Movimentação ligado
-      if (produtoParaAjuste.notificar_movimentacao) { // <-- NOME CORRETO
+      if (produtoParaAjuste.notificar_movimentacao) {
         alertas.push({
           loja_id: lojaAtiva.id,
-          mensagem: `Ajuste manual: ${diferenca > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(diferenca)} unid. de ${produtoParaAjuste.nome}.`, // <-- Troquei 'texto' por 'mensagem' para seguir o padrão da tela EmptyScreen
+          mensagem: `Ajuste manual: ${diferenca > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(diferenca)} unid. de ${produtoParaAjuste.nome}.`,
           tipo: 'movimentacao',
         });
       }
 
       // 2. Verifica se tem Alerta de Estoque Mínimo ligado e se atingiu o limite
-      if (produtoParaAjuste.notificar_minimo && novaQuantidade <= (produtoParaAjuste.estoque_minimo || 0)) { // <-- NOME CORRETO
+      if (produtoParaAjuste.notificar_minimo && novaQuantidade <= (produtoParaAjuste.estoque_minimo || 0)) {
         alertas.push({
           loja_id: lojaAtiva.id,
-          mensagem: `Atenção: O estoque de ${produtoParaAjuste.nome} chegou a ${novaQuantidade} (Mínimo: ${produtoParaAjuste.estoque_minimo}).`, // <-- Troquei 'texto' por 'mensagem'
+          mensagem: `Atenção: O estoque de ${produtoParaAjuste.nome} chegou a ${novaQuantidade} (Mínimo: ${produtoParaAjuste.estoque_minimo}).`,
           tipo: 'alerta_minimo',
         });
       }
@@ -2721,17 +2673,16 @@ const NotificacoesScreen = ({ navigation }) => {
       if (alertas.length > 0) {
         await supabase.from('notificacoes').insert(alertas);
         
-        // A MÁGICA 1: Atualiza a bolinha vermelha global com a quantidade de alertas gerados!
         setUnreadNotifCount(prev => prev + alertas.length);
       }
       // ------------------------------------------
 
-      showBanner("Estoque atualizado!", "success"); // <-- Usa o Banner!
+      showBanner("Estoque atualizado!", "success");
       setModalAjusteVisible(false);
       carregarLembretes();
       setProducts(products.map(p => p.id === produtoParaAjuste.id ? { ...p, estoque_atual: novaQuantidade } : p));
     } else {
-      showBanner("Não foi possível atualizar o estoque.", "error"); // <-- Usa o Banner!
+      showBanner("Não foi possível atualizar o estoque.", "error");
     }
     setAtualizandoEstoque(false);
   };
@@ -2814,13 +2765,13 @@ const NotificacoesScreen = ({ navigation }) => {
         </View>
       </View>
 
-      {/* NOVO: TOGGLE DE ABAS */}
+      {/* TOGGLE DE ABAS */}
       {!selecionando && (
         <View style={{ flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, marginHorizontal: 20, marginTop: 15, padding: 4 }}>
           <TouchableOpacity 
             onPress={() => {
               setAbaAtiva('avisos');
-              carregarNotificacoes(); // <-- A MÁGICA 2: Recarrega o banco ao focar na aba!
+              carregarNotificacoes();
             }} 
             style={{ flex: 1, paddingVertical: 8, backgroundColor: abaAtiva === 'avisos' ? '#fff' : 'transparent', borderRadius: 6, alignItems: 'center', elevation: abaAtiva === 'avisos' ? 2 : 0 }}
           >
@@ -3025,7 +2976,6 @@ const NotificacoesScreen = ({ navigation }) => {
                         {item.produto_id && item.nome_produto && (
                           <TouchableOpacity 
                             onPress={() => {
-                              // VERIFICAÇÃO: Só abre o ajuste se o usuário puder mexer em quantidades
                               if (permissoesAtivas?.quantidades) {
                                 abrirAjusteRapido(item.produto_id);
                               } else {
@@ -3185,7 +3135,7 @@ const NotificacoesScreen = ({ navigation }) => {
                 value={String(novaQuantidade)}
                 onChangeText={(txt) => setNovaQuantidade(Number(txt.replace(/[^0-9]/g, '')))}
                 style={{ fontSize: 32, fontWeight: 'bold', marginHorizontal: 30, color: '#007AFF', textAlign: 'center', width: 80 }}
-                selectTextOnFocus={true} // <-- A MÁGICA AQUI TAMBÉM!
+                selectTextOnFocus={true}
               />
 
               <TouchableOpacity 
@@ -3273,7 +3223,7 @@ const MovimentacoesScreen = ({ navigation }) => {
 
   useEffect(() => {
     const carregarHistorico = async () => {
-      setLoading(true); // Garante que o loading comece
+      setLoading(true);
       
       const { data, error } = await supabase
         .from('movimentacoes')
@@ -3281,13 +3231,12 @@ const MovimentacoesScreen = ({ navigation }) => {
           id, tipo, quantidade, observacao, criado_em,
           produtos!inner(nome, loja_id),
           perfis(nome) 
-        `) // Mudamos para a sintaxe padrão de relação
+        `)
         .eq('produtos.loja_id', lojaAtiva.id)
         .order('criado_em', { ascending: false })
         .limit(100);
 
       if (error) {
-        // SE DER ERRO, ISSO VAI APARECER NO SEU TERMINAL:
         console.error("ERRO NO HISTÓRICO:", error.message);
         Alert.alert("Erro ao carregar", "O banco recusou a busca. Verifique se as tabelas estão ligadas.");
       }
@@ -3366,13 +3315,12 @@ const MovimentacoesScreen = ({ navigation }) => {
 
 const MainAppDrawer = () => {
   const setLojas = useStore(state => state.setLojas);
-  const setLojasMembro = useStore(state => state.setLojasMembro); // <-- Garantido que está aqui
+  const setLojasMembro = useStore(state => state.setLojasMembro);
   const lojaAtiva = useStore(state => state.lojaAtiva); 
   const setLojaAtiva = useStore(state => state.setLojaAtiva);
   const setIsFetchingLojas = useStore(state => state.setIsFetchingLojas);
   const setPermissoesAtivas = useStore(state => state.setPermissoesAtivas);
 
-  // --- NOVO: VIGIA DE PERMISSÕES ---
   useEffect(() => {
     const fetchPermissoes = async () => {
       if (!lojaAtiva) return;
@@ -3382,7 +3330,7 @@ const MainAppDrawer = () => {
       if (lojaAtiva.dono_id === user.id) {
         setPermissoesAtivas({
           quantidades: true, adicionar: true, editar: true, gerenciar: true, 
-          gerenciar_avisos: true, gerenciar_tarefas: true // <-- Permissão master do dono
+          gerenciar_avisos: true, gerenciar_tarefas: true
         });
       } else {
         const { data } = await supabase
@@ -3400,7 +3348,7 @@ const MainAppDrawer = () => {
             editar: data.perm_editar_produto,
             gerenciar: data.perm_gerenciar_membros,
             gerenciar_avisos: data.perm_gerenciar_avisos,
-            gerenciar_tarefas: data.perm_gerenciar_tarefas // <-- Salva no estado global
+            gerenciar_tarefas: data.perm_gerenciar_tarefas
           });
         }
       }
@@ -3459,7 +3407,6 @@ const MainAppDrawer = () => {
         console.log("Erro crítico ao carregar menu:", error);
         Alert.alert("Erro de Sincronização", error.message);
       } finally {
-        // O FINALLY garante que o carregamento vai desligar mesmo se tudo der errado!
         setIsFetchingLojas(false);
       }
     };
@@ -3500,7 +3447,6 @@ const AuthNavigator = () => (
   </Stack.Navigator>
 );
 
-// --- NOVO: Agrupa o Drawer e as novas telas para quem já está logado ---
 const MainAppNavigator = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="Drawer" component={MainAppDrawer} />
@@ -3534,7 +3480,6 @@ export default function App() {
         {!isLoggedIn ? (
           <Stack.Screen name="Auth" component={AuthNavigator} />
         ) : (
-          // Usamos o MainAppNavigator em vez de ir direto pro Drawer
           <Stack.Screen name="MainApp" component={MainAppNavigator} /> 
         )}
       </Stack.Navigator>
