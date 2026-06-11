@@ -51,7 +51,7 @@ const useStore = create((set) => ({
   permissoesAtivas: null,
   setLojas: (lojas) => set({ lojas }),
   setLojasMembro: (lojas) => set({ lojasMembro: lojas }), 
-  setLojaAtiva: (loja) => set({ lojaAtiva: loja }),
+  setLojaAtiva: (loja) => set({ lojaAtiva: loja, carrinhoGlobal: [] }),
   setPermissoesAtivas: (perms) => set({ permissoesAtivas: perms }),
   produtoParaEditarId: null,
   setProdutoParaEditarId: (id) => set({ produtoParaEditarId: id }),
@@ -61,6 +61,10 @@ const useStore = create((set) => ({
   addProduct: (product) => set((state) => ({ products: [...state.products, product] })),
   updateStock: (id, qty) => set((state) => ({
     products: state.products.map(p => p.id === id ? { ...p, estoque: p.estoque + qty } : p)
+  })),
+  carrinhoGlobal: [],
+  setCarrinhoGlobal: (action) => set((state) => ({
+    carrinhoGlobal: typeof action === 'function' ? action(state.carrinhoGlobal) : action
   }))
 }));
 
@@ -326,6 +330,7 @@ const EmptyScreen = ({ navigation }) => {
   const products = useStore(state => state.products);
   const setProducts = useStore(state => state.setProducts);
   const addProduct = useStore(state => state.addProduct);
+  const carrinhoGlobal = useStore(state => state.carrinhoGlobal);
   const [loadingProducts, setLoadingProducts] = useState(false);
 
   // --- NOVOS ESTADOS PARA PESQUISA E FILTRO ---
@@ -577,7 +582,10 @@ const EmptyScreen = ({ navigation }) => {
             usuario_id: meuId,
             tipo: diferenca > 0 ? 'ENTRADA' : 'SAIDA',
             quantidade: Math.abs(diferenca),
-            observacao: 'Edição manual (Janela)'
+            preco_custo_hist: custoNum,
+            preco_venda_hist: vendaNum,
+            is_venda: false,
+            observacao: 'Edição na ficha do produto'
           }]);
 
           const notificacoes = [];
@@ -651,7 +659,10 @@ const EmptyScreen = ({ navigation }) => {
                 usuario_id: meuId,
                 tipo: 'ENTRADA',
                 quantidade: atualNum,
-                observacao: 'Produto reativado'
+                preco_custo_hist: custoNum,
+                preco_venda_hist: vendaNum,
+                is_venda: false,
+                observacao: 'Reativação no catálogo'
               }]);
             }
             addProduct(ressuscitado);
@@ -669,7 +680,10 @@ const EmptyScreen = ({ navigation }) => {
               usuario_id: meuId,
               tipo: 'ENTRADA',
               quantidade: atualNum,
-              observacao: 'Estoque inicial (Novo Produto)'
+              preco_custo_hist: custoNum,
+              preco_venda_hist: vendaNum,
+              is_venda: false,
+              observacao: 'Cadastro inicial'
             }]);
           }
           addProduct(data);
@@ -694,7 +708,10 @@ const EmptyScreen = ({ navigation }) => {
           usuario_id: meuId,
           tipo: 'SAIDA',
           quantidade: produtoEditando.estoque_atual, // Zera tudo que sobrou
-          observacao: 'Produto inativado (excluído)'
+          preco_custo_hist: produtoEditando.preco_custo,
+          preco_venda_hist: produtoEditando.preco_venda,
+          is_venda: false,
+          observacao: 'Baixa por exclusão'
         }]);
       }
 
@@ -739,7 +756,10 @@ const EmptyScreen = ({ navigation }) => {
         usuario_id: meuId,
         tipo: mudanca > 0 ? 'ENTRADA' : 'SAIDA',
         quantidade: Math.abs(mudanca), 
-        observacao: 'Ajuste manual'
+        preco_custo_hist: produto.preco_custo,
+        preco_venda_hist: produto.preco_venda,
+        is_venda: false,
+        observacao: 'Ajuste rápido (Botões)'
       }]);
       if (errorMov) throw errorMov;
 
@@ -805,7 +825,10 @@ const EmptyScreen = ({ navigation }) => {
         usuario_id: meuId,
         tipo: diferenca > 0 ? 'ENTRADA' : 'SAIDA',
         quantidade: Math.abs(diferenca),
-        observacao: 'Ajuste manual (Lista)'
+        preco_custo_hist: produto.preco_custo,
+        preco_venda_hist: produto.preco_venda,
+        is_venda: false,
+        observacao: 'Edição direta na lista'
       }]);
 
       // 3. Motor de Notificações
@@ -918,8 +941,10 @@ const EmptyScreen = ({ navigation }) => {
               
               renderItem={({ item }) => (
                 <TouchableOpacity 
-                  activeOpacity={0.7} 
-                  onPress={() => abrirModalEdicao(item)} 
+                  activeOpacity={!permissoesAtivas?.editar ? 1 : 0.7} 
+                  onPress={() => {
+                    if (permissoesAtivas?.editar) abrirModalEdicao(item);
+                  }} 
                   style={{ backgroundColor: '#fff', padding: 15, borderRadius: 8, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 }}
                 >
                   {/* ... conteúdo do produto ... */}
@@ -932,8 +957,14 @@ const EmptyScreen = ({ navigation }) => {
                   <View style={{ alignItems: 'center' }}>
                     <Text style={{ fontSize: 12, color: '#666', marginBottom: 5 }}>Estoque</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 8, padding: 4 }}>
-                      <TouchableOpacity onPress={() => handleAjusteEstoque(item, -1)} style={{ width: 32, height: 32, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}>
-                        <Ionicons name="remove" size={20} color="#d9534f" />
+                      <TouchableOpacity 
+                        activeOpacity={!permissoesAtivas?.quantidades ? 1 : 0.2}
+                        onPress={() => {
+                          if (permissoesAtivas?.quantidades) handleAjusteEstoque(item, -1);
+                        }} 
+                        style={{ width: 32, height: 32, backgroundColor: !permissoesAtivas?.quantidades ? '#f0f0f0' : '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}
+                      >
+                        <Ionicons name="remove" size={20} color={!permissoesAtivas?.quantidades ? '#ccc' : '#d9534f'} />
                       </TouchableOpacity>
                       {editingStockId === item.id ? (
                         <TextInput
@@ -948,13 +979,12 @@ const EmptyScreen = ({ navigation }) => {
                         />
                       ) : (
                         <TouchableOpacity 
+                          activeOpacity={!permissoesAtivas?.quantidades ? 1 : 0.2}
                           onPress={() => { 
-                            if (!permissoesAtivas?.quantidades) {
-                              showBanner("Sem permissão para alterar o estoque.", "error");
-                              return;
+                            if (permissoesAtivas?.quantidades) {
+                              setEditingStockId(item.id); 
+                              setTempStockValue(item.estoque_atual.toString()); 
                             }
-                            setEditingStockId(item.id); 
-                            setTempStockValue(item.estoque_atual.toString()); 
                           }}
                         >
                           <Text style={{ fontSize: 18, fontWeight: 'bold', color: item.estoque_atual <= item.estoque_minimo ? '#d9534f' : '#4CAF50', width: 45, textAlign: 'center' }}>
@@ -962,8 +992,14 @@ const EmptyScreen = ({ navigation }) => {
                           </Text>
                         </TouchableOpacity>
                       )}
-                      <TouchableOpacity onPress={() => handleAjusteEstoque(item, 1)} style={{ width: 32, height: 32, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}>
-                        <Ionicons name="add" size={20} color="#007AFF" />
+                      <TouchableOpacity 
+                        activeOpacity={!permissoesAtivas?.quantidades ? 1 : 0.2}
+                        onPress={() => {
+                          if (permissoesAtivas?.quantidades) handleAjusteEstoque(item, 1);
+                        }} 
+                        style={{ width: 32, height: 32, backgroundColor: !permissoesAtivas?.quantidades ? '#f0f0f0' : '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, elevation: 1 }}
+                      >
+                        <Ionicons name="add" size={20} color={!permissoesAtivas?.quantidades ? '#ccc' : '#007AFF'} />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1019,37 +1055,51 @@ const EmptyScreen = ({ navigation }) => {
         {/* BARRA INFERIOR (MENU) */}
         <View style={{ height: Platform.OS === 'android' ? 90 : 70, paddingBottom: Platform.OS === 'android' ? 20 : 0, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#e0e0e0', flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' }}>
           
-          {/* Espaço invisível na extrema esquerda */}
-          <View style={{ width: 60 }} />
-
-          {/* Botão de Equipe (Acessos) */}
+          {/* 1. Botão de Equipe (Acessos) */}
           <TouchableOpacity onPress={() => navigation.navigate('Equipe')} style={{ width: 60, alignItems: 'center', justifyContent: 'center' }}>
             <Ionicons name="people-outline" size={28} color="#555" />
             <Text style={{ fontSize: 10, color: '#555', marginTop: 2, fontWeight: 'bold' }}>Equipe</Text>
           </TouchableOpacity>
 
-          {/* Botão de Adicionar Produto (Centralizado) */}
-          <TouchableOpacity style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center', marginTop: -40, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 }} onPress={abrirModalNovo}>
-            <Ionicons name="add" size={32} color="#fff" />
-          </TouchableOpacity>
-
-          {/* Botão de Notificações com Bolinha Vermelha */}
+          {/* 2. Botão de Vender (Caixa) */}
           <TouchableOpacity 
-            onPress={() => navigation.navigate('Notificacoes')}
-            style={{ width: 60, alignItems: 'center', justifyContent: 'center' }}
+            disabled={permissoesAtivas?.caixa === false}
+            onPress={() => navigation.navigate('PDV')} 
+            style={{ width: 60, alignItems: 'center', justifyContent: 'center', opacity: permissoesAtivas?.caixa === false ? 0.4 : 1 }}
           >
             <View>
-              <Ionicons name="notifications-outline" size={28} color="#555" />
-              {unreadNotifCount > 0 && (
-                <View style={{ position: 'absolute', top: -2, right: -4, backgroundColor: '#d9534f', borderRadius: 10, minWidth: 18, height: 18, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4, borderWidth: 1, borderColor: '#fff' }}>
-                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{unreadNotifCount > 9 ? '9+' : unreadNotifCount}</Text>
+              <Ionicons name="cart-outline" size={28} color="#555" />
+              {useStore.getState().carrinhoGlobal.length > 0 && (
+                <View style={{ position: 'absolute', top: -4, right: -8, backgroundColor: '#4CAF50', borderRadius: 10, minWidth: 18, height: 18, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4, zIndex: 10, borderWidth: 1.5, borderColor: '#fff' }}>
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                    {useStore.getState().carrinhoGlobal.reduce((acc, item) => acc + item.quantidade, 0)}
+                  </Text>
                 </View>
               )}
             </View>
-            <Text style={{ fontSize: 10, color: '#555', marginTop: 2, fontWeight: 'bold' }}>Avisos</Text>
+            <Text style={{ fontSize: 10, color: '#555', marginTop: 2, fontWeight: 'bold' }}>Caixa</Text>
           </TouchableOpacity>
 
-          {/* Botão de Histórico */}
+          {/* 3. Botão de Adicionar Produto (Centralizado) */}
+          <TouchableOpacity 
+            disabled={permissoesAtivas?.adicionar === false}
+            style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: permissoesAtivas?.adicionar === false ? '#9ec5f2' : '#007AFF', justifyContent: 'center', alignItems: 'center', marginTop: -40, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 }} 
+            onPress={abrirModalNovo}
+          >
+            <Ionicons name="add" size={32} color={permissoesAtivas?.adicionar === false ? '#eaf3ff' : '#fff'} />
+          </TouchableOpacity>
+
+          {/* 4. Botão de Dashboard */}
+          <TouchableOpacity 
+            disabled={permissoesAtivas?.painel === false}
+            onPress={() => navigation.navigate('Dashboard')} 
+            style={{ width: 60, alignItems: 'center', justifyContent: 'center', opacity: permissoesAtivas?.painel === false ? 0.4 : 1 }}
+          >
+            <Ionicons name="stats-chart-outline" size={28} color="#555" />
+            <Text style={{ fontSize: 10, color: '#555', marginTop: 2, fontWeight: 'bold' }}>Relatórios</Text>
+          </TouchableOpacity>
+
+          {/* 5. Botão de Histórico */}
           <TouchableOpacity onPress={() => navigation.navigate('Movimentacoes')} style={{ width: 60, alignItems: 'center', justifyContent: 'center' }}>
             <Ionicons name="time-outline" size={28} color="#555" />
             <Text style={{ fontSize: 10, color: '#555', marginTop: 2, fontWeight: 'bold' }}>Histórico</Text>
@@ -1886,7 +1936,9 @@ const EquipeScreen = ({ navigation }) => {
       editar: membro.perm_editar_produto || false,
       gerenciar: membro.perm_gerenciar_membros || false,
       gerenciar_avisos: membro.perm_gerenciar_avisos || false,
-      gerenciar_tarefas: membro.perm_gerenciar_tarefas || false
+      gerenciar_tarefas: membro.perm_gerenciar_tarefas || false,
+      caixa: membro.perm_acessar_caixa !== false,
+      painel: membro.perm_acessar_painel !== false
     });
     setModalPermissoesVisible(true);
   };
@@ -1902,7 +1954,9 @@ const EquipeScreen = ({ navigation }) => {
           perm_editar_produto: perms.editar,
           perm_gerenciar_membros: perms.gerenciar,
           perm_gerenciar_avisos: perms.gerenciar_avisos,
-          perm_gerenciar_tarefas: perms.gerenciar_tarefas
+          perm_gerenciar_tarefas: perms.gerenciar_tarefas,
+          perm_acessar_caixa: perms.caixa,
+          perm_acessar_painel: perms.painel
         })
         .eq('id', membroSelecionado.id);
 
@@ -1994,7 +2048,7 @@ const EquipeScreen = ({ navigation }) => {
         
         {/* Container fixo do Título + Degradê */}
         <View style={{ zIndex: 1 }}>
-          <View style={{ backgroundColor: '#f5f5f5', paddingTop: 15, paddingBottom: 10 }}>
+          <View style={{ backgroundColor: '#f5f5f5', paddingTop: 15, paddingBottom: 0 }}>
             <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#888', marginHorizontal: 20, textTransform: 'uppercase' }}>
               Membros Atuais
             </Text>
@@ -2003,7 +2057,7 @@ const EquipeScreen = ({ navigation }) => {
           {/* O DEGRADÊ (FADE): Fica posicionado em absoluto para cair por cima da lista */}
           <LinearGradient
             colors={['#f5f5f5', 'rgba(245,245,245,0)']}
-            style={{ height: 25, width: '100%', position: 'absolute', bottom: -25 }}
+            style={{ height: 20, width: '100%', position: 'absolute', bottom: -20 }}
             pointerEvents="none"
           />
         </View>
@@ -2023,7 +2077,7 @@ const EquipeScreen = ({ navigation }) => {
             data={equipe}
             keyExtractor={(item) => item.id.toString()}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingTop: 25, paddingBottom: 20 }}
+            contentContainerStyle={{ paddingTop: 20, paddingBottom: 20 }}
             renderItem={({ item }) => {
               const souEu = item.usuario_id === meuId; 
               const souDono = lojaAtiva?.dono_id === meuId;
@@ -2168,7 +2222,7 @@ const EquipeScreen = ({ navigation }) => {
                   <Switch value={perms.editar} onValueChange={(val) => setPerms({...perms, editar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.editar ? "#007AFF" : "#f4f3f4"} />
                 </View>
 
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
                   <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Avisos</Text>
                     <Text style={{ fontSize: 12, color: '#888' }}>Permite apagar notificações da loja.</Text>
@@ -2184,12 +2238,28 @@ const EquipeScreen = ({ navigation }) => {
                   <Switch value={perms.gerenciar_tarefas} onValueChange={(val) => setPerms({...perms, gerenciar_tarefas: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar_tarefas ? "#007AFF" : "#f4f3f4"} />
                 </View>
 
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
                   <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Gerenciar Membros</Text>
                     <Text style={{ fontSize: 12, color: '#888' }}>Permite convidar e alterar acessos da equipe.</Text>
                   </View>
                   <Switch value={perms.gerenciar} onValueChange={(val) => setPerms({...perms, gerenciar: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.gerenciar ? "#007AFF" : "#f4f3f4"} />
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Acessar Caixa</Text>
+                    <Text style={{ fontSize: 12, color: '#888' }}>Permite abrir o Caixa e realizar vendas.</Text>
+                  </View>
+                  <Switch value={perms.caixa} onValueChange={(val) => setPerms({...perms, caixa: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.caixa ? "#007AFF" : "#f4f3f4"} />
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 15, color: '#333', fontWeight: '500' }}>Acessar Relatórios</Text>
+                    <Text style={{ fontSize: 12, color: '#888' }}>Permite ver gráficos e relatórios da loja.</Text>
+                  </View>
+                  <Switch value={perms.painel} onValueChange={(val) => setPerms({...perms, painel: val})} trackColor={{ false: "#d9d9d9", true: "#b3d4ff" }} thumbColor={perms.painel ? "#007AFF" : "#f4f3f4"} />
                 </View>
               </View>
 
@@ -2215,6 +2285,993 @@ const EquipeScreen = ({ navigation }) => {
 // ----------------------
 // SCREEN: NOTIFICAÇÕES & AFAZERES
 // ----------------------
+const TarefasScreen = ({ navigation }) => {
+  const lojaAtiva = useStore(state => state.lojaAtiva);
+  const permissoesAtivas = useStore(state => state.permissoesAtivas);
+  const setUnreadNotifCount = useStore(state => state.setUnreadNotifCount);
+  const { setProdutoParaEditarId } = useStore();
+  const products = useStore(state => state.products);
+  const setProducts = useStore(state => state.setProducts);
+
+  // --- ESTADOS: AVISOS (Originais) ---
+  const [notificacoes, setNotificacoes] = useState([]);
+  const [loadingAvisos, setLoadingAvisos] = useState(true);
+  const [selecionando, setSelecionando] = useState(false);
+  const [selecionados, setSelecionados] = useState([]);
+  const [modalConfirmarVisible, setModalConfirmarVisible] = useState(false);
+  const [modalAcaoUnicaVisible, setModalAcaoUnicaVisible] = useState(false);
+  const [notifFocada, setNotifFocada] = useState(null);
+
+  // --- ESTADOS: AFAZERES (Novos) ---
+  const [abaAtiva, setAbaAtiva] = useState('afazeres'); // 'avisos' ou 'afazeres'
+  const [lembretes, setLembretes] = useState([]);
+  const [loadingLembretes, setLoadingLembretes] = useState(true);
+  const [novoLembrete, setNovoLembrete] = useState('');
+  const [dataLimite, setDataLimite] = useState(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [criandoLembrete, setCriandoLembrete] = useState(false);
+  const [lembreteEditandoData, setLembreteEditandoData] = useState(null);
+  const [produtoSelecionado, setProdutoSelecionado] = useState(null);
+  const [modalProdutosVisible, setModalProdutosVisible] = useState(false);
+  const [listaProdutos, setListaProdutos] = useState([]);
+  const [modalAjusteVisible, setModalAjusteVisible] = useState(false);
+  const [produtoParaAjuste, setProdutoParaAjuste] = useState(null);
+  const [novaQuantidade, setNovaQuantidade] = useState(0);
+  const [atualizandoEstoque, setAtualizandoEstoque] = useState(false);
+
+  const [notification, setNotification] = useState({ visible: false, message: '', type: 'success' });
+  const [modalConfirmarLimpeza, setModalConfirmarLimpeza] = useState(false);
+  
+  const showBanner = (message, type = 'success') => {
+    setNotification({ visible: true, message, type });
+    setTimeout(() => setNotification({ visible: false, message: '', type: 'success' }), 3000);
+  };
+
+  // === LÓGICA DE AVISOS ===
+  const carregarNotificacoes = async () => {
+    setLoadingAvisos(true);
+    const { data } = await supabase
+      .from('notificacoes')
+      .select('id, mensagem, tipo, lida, created_at')
+      .eq('loja_id', lojaAtiva.id)
+      .order('created_at', { ascending: false });
+
+    if (data) {
+      setNotificacoes(data);
+      const naoLidas = data.filter(n => !n.lida).map(n => n.id);
+      
+      if (permissoesAtivas?.gerenciar_avisos && naoLidas.length > 0 && !selecionando) {
+        await supabase.from('notificacoes').update({ lida: true }).in('id', naoLidas);
+        setUnreadNotifCount(0);
+      } else {
+        setUnreadNotifCount(naoLidas.length);
+      }
+    }
+    setLoadingAvisos(false);
+  };
+
+  const toggleSelecao = (id) => {
+    if (selecionados.includes(id)) setSelecionados(selecionados.filter(item => item !== id));
+    else setSelecionados([...selecionados, id]);
+  };
+
+  const handleApagarSelecionadas = async () => {
+    try {
+      let novasNotificacoes = [];
+      if (selecionando) {
+        await supabase.from('notificacoes').delete().in('id', selecionados);
+        novasNotificacoes = notificacoes.filter(n => !selecionados.includes(n.id));
+      } else if (notifFocada) {
+        await supabase.from('notificacoes').delete().eq('id', notifFocada.id);
+        novasNotificacoes = notificacoes.filter(n => n.id !== notifFocada.id);
+      } else {
+        await supabase.from('notificacoes').delete().eq('loja_id', lojaAtiva.id);
+        novasNotificacoes = [];
+      }
+      setNotificacoes(novasNotificacoes);
+      setUnreadNotifCount(novasNotificacoes.filter(n => !n.lida).length);
+      sairModoSelecao();
+      setNotifFocada(null);
+      setModalConfirmarVisible(false);
+      setModalAcaoUnicaVisible(false);
+    } catch (error) {
+      Alert.alert("Erro", "Não foi possível apagar os avisos.");
+    }
+  };
+
+  const handleMarcarComoLida = async (lidaStatus) => {
+    const ids = selecionando ? selecionados : [notifFocada.id];
+    await supabase.from('notificacoes').update({ lida: lidaStatus }).in('id', ids);
+    const novasNotificacoes = notificacoes.map(n => ids.includes(n.id) ? { ...n, lida: lidaStatus } : n);
+    setNotificacoes(novasNotificacoes);
+    setUnreadNotifCount(novasNotificacoes.filter(n => !n.lida).length);
+    sairModoSelecao();
+    setModalAcaoUnicaVisible(false);
+  };
+
+  const sairModoSelecao = () => {
+    setSelecionando(false);
+    setSelecionados([]);
+  };
+
+  // === LÓGICA DE AFAZERES ===
+  const carregarLembretes = async () => {
+    setLoadingLembretes(true);
+    const { data: lembretesData } = await supabase
+      .from('lembretes')
+      .select('*')
+      .eq('loja_id', lojaAtiva.id);
+
+    if (lembretesData) {
+      // 1. BUSCA DE NOMES
+      const ids = [...new Set(lembretesData.map(l => l.concluido_por_id).filter(id => id))];
+      const prodIds = [...new Set(lembretesData.map(l => l.produto_id).filter(id => id))];
+      
+      let produtosMap = {};
+      if (prodIds.length > 0) {
+        const { data: prods } = await supabase.from('produtos').select('id, nome').in('id', prodIds);
+        if (prods) prods.forEach(p => { produtosMap[p.id] = p.nome });
+      }
+
+      let perfisMap = {};
+      if (ids.length > 0) {
+        const { data: perfis } = await supabase.from('perfis').select('id, nome').in('id', ids);
+        if (perfis) perfis.forEach(p => { perfisMap[p.id] = p.nome });
+      }
+
+      // 2. RADAR DE PRIORIDADES E MAPEAMENTO
+      const alertasGerados = [];
+      const atualizacoesPrioridade = [];
+      
+      const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+
+      const lembretesComNomes = lembretesData.map(l => {
+        if (!l.concluido && l.data_limite) {
+          const limite = new Date(l.data_limite);
+
+          if (!isNaN(limite.getTime())) {
+            limite.setHours(0, 0, 0, 0);
+            const diffDias = Math.ceil((limite.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
+            
+            // Nova Hierarquia de Níveis:
+            let nivelAtual = 1; 
+            if (diffDias < 0) nivelAtual = 4;      // ATRASADA (Nível Crítico)
+            else if (diffDias === 0) nivelAtual = 3; // VENCE HOJE (Nível Urgente)
+            else if (diffDias <= 2) nivelAtual = 2;  // ATENÇÃO (1 ou 2 dias)
+
+            const nivelNotificado = l.prioridade_notificada || 1;
+
+            // Dispara apenas se a urgência aumentou
+            if (nivelAtual > nivelNotificado) {
+              let urgenciaStr = "";
+              
+              if (nivelAtual === 4) {
+                urgenciaStr = "está ATRASADA";
+              } else if (nivelAtual === 3) {
+                urgenciaStr = "vence HOJE";
+              } else {
+                urgenciaStr = `entrou em estado de ATENÇÃO (vence em ${diffDias} ${diffDias === 1 ? 'dia' : 'dias'})`;
+              }
+              
+              alertasGerados.push({
+                loja_id: lojaAtiva.id,
+                mensagem: `Urgência: A tarefa "${l.texto}" ${urgenciaStr}!`,
+                tipo: 'alerta_tarefa'
+              });
+
+              atualizacoesPrioridade.push({
+                id: l.id,
+                prioridade_notificada: nivelAtual
+              });
+            }
+          }
+        }
+
+        return {
+          ...l,
+          nome_concluido_por: l.concluido_por_id ? perfisMap[l.concluido_por_id] : null,
+          nome_produto: l.produto_id ? produtosMap[l.produto_id] : null
+        };
+      });
+
+      // 3. DISPARO DE AVISOS NO BANCO
+      if (alertasGerados.length > 0) {
+        await supabase.from('notificacoes').insert(alertasGerados);
+        setUnreadNotifCount(prev => prev + alertasGerados.length);
+        
+        for (const atualizacao of atualizacoesPrioridade) {
+          await supabase.from('lembretes')
+            .update({ prioridade_notificada: atualizacao.prioridade_notificada })
+            .eq('id', atualizacao.id);
+        }
+      }
+
+      // 4. ORDENAÇÃO INTELIGENTE
+      const lembretesOrdenados = lembretesComNomes.sort((a, b) => {
+        if (a.concluido && !b.concluido) return 1;
+        if (!a.concluido && b.concluido) return -1;
+
+        if (!a.concluido && !b.concluido) {
+          if (a.data_limite && !b.data_limite) return -1; 
+          if (!a.data_limite && b.data_limite) return 1;  
+
+          if (a.data_limite && b.data_limite) {
+            const dataA = new Date(a.data_limite); dataA.setHours(0, 0, 0, 0);
+            const dataB = new Date(b.data_limite); dataB.setHours(0, 0, 0, 0);
+            
+            if (dataA.getTime() !== dataB.getTime()) {
+              return dataA.getTime() - dataB.getTime();
+            }
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          }
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        }
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+
+      setLembretes(lembretesOrdenados);
+    }
+    setLoadingLembretes(false);
+  };
+
+  // Abre apenas o modal de confirmação
+  const handleLimparConcluidas = () => {
+    setModalConfirmarLimpeza(true);
+  };
+
+  // Executa a limpeza de fato após a confirmação
+  const executarLimpezaDefinitiva = async () => {
+    setModalConfirmarLimpeza(false);
+    
+    const { error } = await supabase
+      .from('lembretes')
+      .delete()
+      .eq('loja_id', lojaAtiva.id)
+      .eq('concluido', true);
+
+    if (!error) {
+      showBanner("Tarefas concluídas removidas!", "success");
+      carregarLembretes();
+    } else {
+      showBanner("Erro ao limpar tarefas.", "error");
+    }
+  };
+
+  // AGORA SIM, a função de abrir o modal no lugar certo (fora do carregarLembretes)
+  const abrirModalProdutos = async () => {
+    const { data } = await supabase.from('produtos').select('id, nome').eq('loja_id', lojaAtiva.id).order('nome');
+    if (data) setListaProdutos(data);
+    setModalProdutosVisible(true);
+  };
+
+  const handleCriarLembreteRapido = async () => {
+    if (!novoLembrete.trim()) return;
+    setCriandoLembrete(true);
+    const { data: { user } } = await supabase.auth.getUser();
+
+    const { error } = await supabase.from('lembretes').insert([{
+      loja_id: lojaAtiva.id,
+      texto: novoLembrete.trim(),
+      criador_id: user.id,
+      data_limite: dataLimite ? dataLimite.toISOString() : null,
+      produto_id: produtoSelecionado ? produtoSelecionado.id : null
+    }]);
+
+    if (!error) {
+      setNovoLembrete('');
+      setDataLimite(null);
+      setProdutoSelecionado(null);
+      carregarLembretes();
+    } else {
+      console.log("ERRO AO CRIAR TAREFA:", error);
+      Alert.alert("Erro", "Não foi possível criar a tarefa.");
+    }
+    setCriandoLembrete(false);
+  };
+
+  const onChangeDate = async (event, selectedDate) => {
+    setShowDatePicker(false);
+    
+    if (event.type === 'dismissed' || !selectedDate) {
+      setLembreteEditandoData(null); 
+      return;
+    }
+
+    // Cenário A: Editando a data de uma tarefa que já existe
+    if (lembreteEditandoData) {
+      const tarefaId = lembreteEditandoData.id;
+      
+      setLembretes(lembretes.map(l => l.id === tarefaId ? { ...l, data_limite: selectedDate.toISOString() } : l));
+      
+      // Salva no Supabase E reseta o radar de notificações!
+      const { error } = await supabase
+        .from('lembretes')
+        .update({ 
+          data_limite: selectedDate.toISOString(),
+          prioridade_notificada: 1 
+        })
+        .eq('id', tarefaId);
+
+      if (error) {
+        Alert.alert("Erro", "Não foi possível atualizar o prazo.");
+        carregarLembretes();
+      } else {
+        carregarLembretes(); 
+      }
+      
+      setLembreteEditandoData(null); // Limpa o estado após o sucesso
+    } 
+    // Cenário B: Definindo a data para um NOVO lembrete
+    else {
+      setDataLimite(selectedDate);
+    }
+  };
+
+  // Função para calcular a cor da borda automaticamente baseada na data limite
+  const getCorPrioridadeAutomatica = (dataLimite, concluido) => {
+    if (concluido) return '#eee'; // Concluído fica neutro
+    if (!dataLimite) return '#e2e8f0'; // Sem prazo fica com a cor padrão do card
+
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    
+    const prazo = new Date(dataLimite);
+    prazo.setHours(0, 0, 0, 0);
+
+    const diffTime = prazo - hoje;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); // Converte milissegundos para dias
+
+    if (diffDays < 0) return '#d9534f'; // Vermelho: Atrasado
+    if (diffDays === 0) return '#ff3b30'; // Vermelho Forte: É para hoje!
+    if (diffDays <= 2) return '#ffc107'; // Amarelo: Faltam 1 ou 2 dias
+    return '#4CAF50'; // Verde: Faltam 3 dias ou mais
+  };
+
+  // Função para verificar se a data limite é estritamente anterior a hoje (ignorando horas)
+  const isAtrasado = (dataLimite, concluido) => {
+    if (concluido || !dataLimite) return false;
+    
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    
+    const prazo = new Date(dataLimite);
+    prazo.setHours(0, 0, 0, 0); // Zera o relógio do prazo
+    
+    return prazo < hoje;
+  };
+
+  const toggleConcluido = async (tarefa) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const novoStatus = !tarefa.concluido;
+    
+    // Se estiver a marcar como concluído, guarda o seu ID. Se estiver a desmarcar, limpa o ID.
+    const concluidoPor = novoStatus ? user.id : null;
+
+    // Atualiza o estado local para ser instantâneo
+    setLembretes(lembretes.map(l => l.id === tarefa.id ? { 
+      ...l, 
+      concluido: novoStatus, 
+      concluido_por_id: concluidoPor 
+    } : l));
+    
+    // Envia para o banco de dados
+    await supabase.from('lembretes').update({ 
+      concluido: novoStatus,
+      concluido_por_id: concluidoPor
+    }).eq('id', tarefa.id);
+    
+    // Recarrega para puxar os nomes atualizados dos perfis
+    carregarLembretes();
+  };
+
+  const apagarLembrete = async (id) => {
+    setLembretes(lembretes.filter(l => l.id !== id));
+    await supabase.from('lembretes').delete().eq('id', id);
+  };
+
+  useEffect(() => {
+    carregarNotificacoes();
+    carregarLembretes();
+  }, [lojaAtiva]);
+
+  const abrirAjusteRapido = async (produtoId) => {
+    // Busca os dados frescos e as configurações de notificação do produto
+    const { data, error } = await supabase
+      .from('produtos')
+      .select('id, nome, estoque_atual, estoque_minimo, notificar_minimo, notificar_movimentacao')
+      .eq('id', produtoId)
+      .single();
+
+    if (error) console.log("Erro ao buscar produto:", error);
+
+    if (data) {
+      setProdutoParaAjuste(data);
+      setNovaQuantidade(data.estoque_atual || 0);
+      setModalAjusteVisible(true);
+    }
+  };
+
+  const salvarAjusteEstoque = async () => {
+    // Validação: Se não mudou nada, só fecha a janela
+    if (novaQuantidade === produtoParaAjuste.estoque_atual) {
+      setModalAjusteVisible(false);
+      return;
+    }
+
+    setAtualizandoEstoque(true);
+    const diferenca = novaQuantidade - produtoParaAjuste.estoque_atual;
+    const { data: { user } } = await supabase.auth.getUser();
+
+    const { error } = await supabase
+      .from('produtos')
+      .update({ estoque_atual: novaQuantidade })
+      .eq('id', produtoParaAjuste.id);
+
+    if (!error) {
+      // REGISTRA NO HISTÓRICO!
+      await supabase.from('movimentacoes').insert([{
+        produto_id: produtoParaAjuste.id,
+        usuario_id: user.id,
+        tipo: diferenca > 0 ? 'ENTRADA' : 'SAIDA',
+        quantidade: Math.abs(diferenca),
+        preco_custo_hist: produtoParaAjuste.preco_custo,
+        preco_venda_hist: produtoParaAjuste.preco_venda,
+        is_venda: false,
+        observacao: 'Ajuste via aba de Tarefas'
+      }]);
+
+      // --- DISPARO DE NOTIFICAÇÕES (ALARMES) ---
+      const alertas = [];
+      
+      // 1. Verifica se tem Alerta de Movimentação ligado
+      if (produtoParaAjuste.notificar_movimentacao) {
+        alertas.push({
+          loja_id: lojaAtiva.id,
+          mensagem: `Ajuste manual: ${diferenca > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(diferenca)} unid. de ${produtoParaAjuste.nome}.`,
+          tipo: 'movimentacao',
+        });
+      }
+
+      // 2. Verifica se tem Alerta de Estoque Mínimo ligado e se atingiu o limite
+      if (produtoParaAjuste.notificar_minimo && novaQuantidade <= (produtoParaAjuste.estoque_minimo || 0)) {
+        alertas.push({
+          loja_id: lojaAtiva.id,
+          mensagem: `Atenção: O estoque de ${produtoParaAjuste.nome} chegou a ${novaQuantidade} (Mínimo: ${produtoParaAjuste.estoque_minimo}).`,
+          tipo: 'alerta_minimo',
+        });
+      }
+
+      // Se houver algum alerta gerado, envia para a tabela de notificações
+      if (alertas.length > 0) {
+        await supabase.from('notificacoes').insert(alertas);
+        
+        setUnreadNotifCount(prev => prev + alertas.length);
+      }
+      // ------------------------------------------
+
+      showBanner("Estoque atualizado!", "success");
+      setModalAjusteVisible(false);
+      carregarLembretes();
+      setProducts(products.map(p => p.id === produtoParaAjuste.id ? { ...p, estoque_atual: novaQuantidade } : p));
+    } else {
+      showBanner("Não foi possível atualizar o estoque.", "error");
+    }
+    setAtualizandoEstoque(false);
+  };
+
+  // Calcula quantas tarefas estão concluídas para mostrar no botão
+  const qtdConcluidas = lembretes.filter(l => l.concluido).length;
+
+  // Função para dar identidade visual a cada tipo de aviso
+  const getVisualAviso = (tipo) => {
+    switch (tipo) {
+      case 'alerta_tarefa': 
+        return { icone: 'alarm-outline', corIcone: '#ef4444', corFundo: '#fee2e2' }; // Vermelho (Urgência/Tempo)
+      case 'alerta_minimo': 
+        return { icone: 'warning-outline', corIcone: '#f59e0b', corFundo: '#fef3c7' }; // Amarelo (Atenção/Estoque Baixo)
+      case 'movimentacao': 
+        return { icone: 'swap-horizontal-outline', corIcone: '#3b82f6', corFundo: '#dbeafe' }; // Azul (Ajustes de Estoque)
+      default: 
+        return { icone: 'notifications-outline', corIcone: '#64748b', corFundo: '#f1f5f9' }; // Cinza (Padrão)
+    }
+  };
+  
+  return (
+    <View style={{ flex: 1, backgroundColor: '#f5f5f5' }}>
+      
+      {/* NOTIFICAÇÃO VISUAL DO BANNER */}
+      {notification.visible && (
+        <View style={[
+          styles.topNotification, 
+          { 
+            backgroundColor: notification.type === 'error' ? 'rgba(244, 67, 54, 0.9)' : 'rgba(76, 175, 80, 0.9)', 
+            zIndex: 999, 
+            top: 20,
+            position: 'absolute', left: 20, right: 20, padding: 15, borderRadius: 8, alignItems: 'center'
+          }
+        ]}>
+          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
+            {notification.message}
+          </Text>
+        </View>
+      )}
+
+      {/* CABEÇALHO DINÂMICO */}
+      <View style={{ paddingTop: Platform.OS === 'android' ? 40 : 50, paddingBottom: 15, paddingHorizontal: 20, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderColor: '#eee' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity onPress={() => selecionando ? sairModoSelecao() : navigation.goBack()} style={{ marginRight: 15 }}>
+            <Ionicons name={selecionando ? "close" : "arrow-back"} size={28} color="#333" />
+          </TouchableOpacity>
+          <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>
+            {selecionando ? `${selecionados.length} selecionados` : (abaAtiva === 'avisos' ? "Avisos" : "Tarefas")}
+          </Text>
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {!selecionando ? (
+            <>
+              {abaAtiva === 'avisos' && permissoesAtivas?.gerenciar_avisos && (
+                <TouchableOpacity onPress={() => setSelecionando(true)} style={{ marginRight: 15 }}>
+                  <Text style={{ color: '#007AFF', fontWeight: 'bold' }}>Selecionar</Text>
+                </TouchableOpacity>
+              )}
+              {abaAtiva === 'avisos' && permissoesAtivas?.gerenciar_avisos && notificacoes.length > 0 && (
+                <TouchableOpacity onPress={() => { setNotifFocada(null); setModalConfirmarVisible(true); }}>
+                  <Ionicons name="trash-outline" size={24} color="#d9534f" />
+                </TouchableOpacity>
+              )}
+            </>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TouchableOpacity onPress={() => handleMarcarComoLida(true)} style={{ marginRight: 20 }} disabled={selecionados.length === 0}>
+                <Ionicons name="mail-open-outline" size={24} color={selecionados.length === 0 ? "#ccc" : "#007AFF"} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleMarcarComoLida(false)} style={{ marginRight: 20 }} disabled={selecionados.length === 0}>
+                <Ionicons name="mail-unread-outline" size={24} color={selecionados.length === 0 ? "#ccc" : "#007AFF"} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setModalConfirmarVisible(true)} disabled={selecionados.length === 0}>
+                <Ionicons name="trash-outline" size={24} color={selecionados.length === 0 ? "#ccc" : "#d9534f"} />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </View>
+
+      {/* === CONTEÚDO DA ABA: AVISOS === */}
+      {abaAtiva === 'avisos' && (
+        loadingAvisos ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator size="large" color="#007AFF" /></View>
+        ) : notificacoes.length === 0 ? (
+          <View style={{ flex: 1, alignItems: 'center', padding: 20, paddingTop: '40%' }}>
+            <Ionicons name="notifications-off-outline" size={64} color="#ccc" />
+            <Text style={{ marginTop: 20, fontSize: 18, color: '#666', fontWeight: 'bold' }}>Nenhum aviso por aqui.</Text>
+            <Text style={{ marginTop: 10, fontSize: 14, color: '#999', textAlign: 'center' }}>Quando produtos atingirem o estoque mínimo ou forem movimentados, você será avisado aqui.</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={notificacoes}
+            keyExtractor={(item) => item.id.toString()}
+            contentContainerStyle={{ padding: 15 }}
+            renderItem={({ item }) => {
+              const isSelected = selecionados.includes(item.id);
+              const isMinimo = item.tipo === 'alerta_minimo';
+              return (
+                <TouchableOpacity 
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (selecionando) toggleSelecao(item.id);
+                    else if (permissoesAtivas?.gerenciar_avisos) {
+                      setNotifFocada(item);
+                      setModalAcaoUnicaVisible(true);
+                    }
+                  }}
+                  style={{
+                    backgroundColor: isSelected ? '#e6f2ff' : (item.lida ? '#fff' : '#f0f7ff'), 
+                    padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', 
+                    borderWidth: 1, borderColor: isSelected ? '#007AFF' : (item.lida ? '#eee' : '#b3d4ff'), elevation: 2
+                  }}
+                >
+                  {selecionando && (
+                    <View style={{ marginRight: 10 }}>
+                      <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={24} color={isSelected ? "#007AFF" : "#ccc"} />
+                    </View>
+                  )}
+                  
+                  {/* O ícone e a cor de fundo agora mudam de acordo com o tipo da notificação */}
+                  <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: getVisualAviso(item.tipo).corFundo, justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                    <Ionicons name={getVisualAviso(item.tipo).icone} size={20} color={getVisualAviso(item.tipo).corIcone} />
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, color: '#333', fontWeight: item.lida ? 'normal' : 'bold' }}>{item.mensagem}</Text>
+                  </View>
+                  {!item.lida && !selecionando && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#007AFF' }} />}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        )
+      )}
+
+      {/* === CONTEÚDO DA ABA: AFAZERES === */}
+      {abaAtiva === 'afazeres' && (
+        <View style={{ flex: 1 }}>
+          
+          {/* 1. BARRA DE CRIAR RÁPIDA (Protegida) */}
+          {permissoesAtivas?.gerenciar_tarefas && (
+            <View style={{ paddingHorizontal: 20, paddingTop: 15, paddingBottom: 5, zIndex: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
+                  <Ionicons name="add-circle-outline" size={22} color="#64748b" />
+                  <TextInput
+                    placeholder="Adicione uma tarefa..."
+                    placeholderTextColor="#94a3b8"
+                    value={novoLembrete}
+                    onChangeText={setNovoLembrete}
+                    style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }}
+                    onSubmitEditing={handleCriarLembreteRapido}
+                  />
+
+                  {/* BOTÃO DE VINCULAR PRODUTO */}
+                  <TouchableOpacity onPress={abrirModalProdutos} style={{ paddingHorizontal: 5 }}>
+                    <Ionicons name="cube" size={22} color={produtoSelecionado ? "#007AFF" : "#94a3b8"} />
+                  </TouchableOpacity>
+
+                  {/* BOTÃO DO CALENDÁRIO */}
+                  <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ paddingHorizontal: 5 }}>
+                    <Ionicons name="calendar" size={22} color={dataLimite ? "#007AFF" : "#94a3b8"} />
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  onPress={handleCriarLembreteRapido}
+                  disabled={criandoLembrete || !novoLembrete}
+                  style={{ marginLeft: 10, backgroundColor: (criandoLembrete || !novoLembrete) ? '#a0cbfc' : '#007AFF', width: 48, height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }}
+                >
+                  {criandoLembrete ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={20} color="#fff" />}
+                </TouchableOpacity>
+              </View>
+              
+              {/* TEXTO AVISANDO O PRODUTO E A DATA ESCOLHIDA ANTES DE ENVIAR */}
+              {produtoSelecionado && (
+                <Text style={{ color: '#007AFF', fontSize: 12, marginTop: 5, marginLeft: 5, fontWeight: 'bold' }}>
+                  <Ionicons name="cube" size={12} /> Produto: {produtoSelecionado.nome}
+                  <Text onPress={() => setProdutoSelecionado(null)} style={{ color: '#d9534f' }}> (Remover)</Text>
+                </Text>
+              )}
+              {dataLimite && (
+                <Text style={{ color: '#007AFF', fontSize: 12, marginTop: 5, marginLeft: 5, fontWeight: 'bold' }}>
+                  <Ionicons name="calendar" size={12} /> Prazo: {dataLimite.toLocaleDateString('pt-BR')} 
+                  <Text onPress={() => setDataLimite(null)} style={{ color: '#d9534f' }}> (Remover)</Text>
+                </Text>
+              )}
+
+              {/* O MODAL DO CALENDÁRIO INVISÍVEL */}
+              {showDatePicker && (
+                <DateTimePicker
+                  value={dataLimite || new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={onChangeDate}
+                />
+              )}
+
+              {/* EFEITO DEGRADÊ (FUMAÇA) */}
+              <LinearGradient
+                colors={['#f5f5f5', 'rgba(245, 245, 245, 0)']}
+                style={{ position: 'absolute', left: 0, right: 0, bottom: -20, height: 20, zIndex: 10 }}
+                pointerEvents="none"
+              />
+            </View>
+          )}
+
+          {/* LISTA DE TAREFAS */}
+          {loadingLembretes ? (
+             <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+          ) : lembretes.length === 0 ? (
+             <View style={{ flex: 1, alignItems: 'center', padding: 20, paddingTop: '30%' }}>
+               <Ionicons name="checkmark-done-circle-outline" size={64} color="#ccc" />
+               <Text style={{ marginTop: 20, fontSize: 16, color: '#666', fontWeight: 'bold' }}>Tudo limpo por aqui!</Text>
+               <Text style={{ marginTop: 10, fontSize: 14, color: '#999', textAlign: 'center' }}>Adicione tarefas acima para a sua equipe.</Text>
+             </View>
+          ) : (
+             <FlatList
+               data={lembretes}
+               keyExtractor={item => item.id.toString()}
+               contentContainerStyle={{ padding: 15, paddingBottom: 100 }}
+               
+               // 2. BOTÃO DE LIMPAR (Protegido)
+               ListFooterComponent={() => {
+                 if (qtdConcluidas === 0 || !permissoesAtivas?.gerenciar_tarefas) return null; 
+                 
+                 return (
+                   <TouchableOpacity 
+                     onPress={handleLimparConcluidas}
+                     style={{ marginTop: 20, marginBottom: 10, padding: 15, backgroundColor: '#fff', borderRadius: 10, alignItems: 'center', borderWidth: 1, borderColor: '#fca5a5', borderStyle: 'dashed' }}
+                   >
+                     <Text style={{ color: '#ef4444', fontWeight: 'bold' }}>
+                       <Ionicons name="trash-bin-outline" size={16} /> Limpar {qtdConcluidas} {qtdConcluidas === 1 ? 'tarefa concluída' : 'tarefas concluídas'}
+                     </Text>
+                   </TouchableOpacity>
+                 );
+               }}
+
+               renderItem={({ item }) => (
+                  <View style={{ backgroundColor: item.concluido ? '#f8f9fa' : '#fff', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: item.concluido ? '#eee' : '#e2e8f0', elevation: item.concluido ? 0 : 1, borderLeftWidth: item.concluido ? 1 : 4, borderLeftColor: getCorPrioridadeAutomatica(item.data_limite, item.concluido) }}>
+                     
+                     {/* CHECKBOX (Livre para todos clicarem) */}
+                     <TouchableOpacity onPress={() => toggleConcluido(item)} style={{ marginRight: 15 }}>
+                        <Ionicons name={item.concluido ? "checkmark-circle" : "ellipse-outline"} size={28} color={item.concluido ? "#4CAF50" : "#ccc"} />
+                     </TouchableOpacity>
+
+                     <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, color: item.concluido ? '#999' : '#333', textDecorationLine: item.concluido ? 'line-through' : 'none', fontWeight: item.concluido ? 'normal' : '500' }}>{item.texto}</Text>
+                        
+                        {/* 3. PRAZO CLICÁVEL (Protegido) */}
+                        <TouchableOpacity 
+                          onPress={() => {
+                            if (permissoesAtivas?.gerenciar_tarefas) {
+                              setLembreteEditandoData(item);
+                              setShowDatePicker(true);
+                            } else {
+                              showBanner("Sem permissão para alterar prazos.", "error");
+                            }
+                          }}
+                          style={{ marginTop: 4 }}
+                          activeOpacity={permissoesAtivas?.gerenciar_tarefas ? 0.2 : 1}
+                        >
+                          <Text style={{ fontSize: 12, color: (!item.data_limite || item.concluido) ? '#94a3b8' : getCorPrioridadeAutomatica(item.data_limite, item.concluido), fontWeight: 'bold' }}>
+                            <Ionicons name="calendar-outline" size={12} /> Prazo: {item.data_limite ? new Date(item.data_limite).toLocaleDateString('pt-BR') : "Não definido"}
+                            {isAtrasado(item.data_limite, item.concluido) && " (Atrasado)"}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* ETIQUETA DO PRODUTO (Protegida pela permissão de quantidades) */}
+                        {item.produto_id && item.nome_produto && (
+                          <TouchableOpacity 
+                            onPress={() => {
+                              if (permissoesAtivas?.quantidades) {
+                                abrirAjusteRapido(item.produto_id);
+                              } else {
+                                showBanner("Sem permissão para alterar o estoque.", "error");
+                              }
+                            }} 
+                            style={{ 
+                              marginTop: 8, 
+                              backgroundColor: item.concluido ? '#f8f9fa' : '#f0f7ff', 
+                              paddingVertical: 4, 
+                              paddingHorizontal: 8, 
+                              borderRadius: 6, 
+                              alignSelf: 'flex-start', 
+                              flexDirection: 'row', 
+                              alignItems: 'center', 
+                              borderWidth: 1, 
+                              borderColor: item.concluido ? '#eee' : '#cce4ff' 
+                            }}
+                            activeOpacity={permissoesAtivas?.quantidades ? 0.2 : 1}
+                          >
+                            <Ionicons name="cube-outline" size={14} color={item.concluido ? '#999' : '#007AFF'} style={{ marginRight: 4 }} />
+                            <Text style={{ fontSize: 12, color: item.concluido ? '#999' : '#007AFF', fontWeight: '600' }}>{item.nome_produto}</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        {/* EXIBE QUEM CONCLUIU */}
+                        {item.concluido && item.nome_concluido_por && (
+                            <Text style={{ fontSize: 11, color: '#4CAF50', marginTop: 4, fontStyle: 'italic' }}>
+                              <Ionicons name="checkmark-done" size={12} /> Feito por: {item.nome_concluido_por}
+                            </Text>
+                        )}
+                     </View>
+
+                     {/* 4. LIXEIRA (Protegida) */}
+                     {permissoesAtivas?.gerenciar_tarefas && (
+                       <TouchableOpacity onPress={() => apagarLembrete(item.id)} style={{ padding: 5 }}>
+                          <Ionicons name="trash-outline" size={22} color="#d9534f" />
+                       </TouchableOpacity>
+                     )}
+                  </View>
+               )}
+             />
+          )}
+        </View>
+      )}
+
+      {/* MODAL DE CONFIRMAR APAGAR AVISOS (Mantido intacto) */}
+      <Modal visible={modalConfirmarVisible} transparent={true} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '85%', overflow: 'hidden' }}>
+            <View style={{ padding: 20, backgroundColor: '#f8f9fa', borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="warning" size={22} color="#d9534f" style={{ marginRight: 10 }} />
+              <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>Apagar Avisos?</Text>
+            </View>
+            <View style={{ padding: 20 }}>
+              <Text style={{ fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 20 }}>
+                {selecionando 
+                  ? `Deseja apagar os ${selecionados.length} avisos selecionados?` 
+                  : notifFocada 
+                    ? "Deseja apagar este aviso?"
+                    : "Deseja limpar todas as notificações da sua caixa de entrada?"}
+              </Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <TouchableOpacity onPress={() => setModalConfirmarVisible(false)} style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8, marginRight: 10 }}>
+                  <Text style={{ color: '#555', fontWeight: 'bold' }}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleApagarSelecionadas} style={{ flex: 1, backgroundColor: '#d9534f', paddingVertical: 12, alignItems: 'center', borderRadius: 8 }}>
+                  <Text style={{ color: '#fff', fontWeight: 'bold' }}>Sim, apagar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL DE AÇÃO ÚNICA AVISOS (Mantido intacto) */}
+      <Modal visible={modalAcaoUnicaVisible} transparent={true} animationType="fade">
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setModalAcaoUnicaVisible(false)}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '80%', overflow: 'hidden' }}>
+            <TouchableOpacity onPress={() => handleMarcarComoLida(!notifFocada?.lida)} style={{ padding: 18, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name={notifFocada?.lida ? "mail-unread-outline" : "mail-open-outline"} size={22} color="#007AFF" style={{ marginRight: 15 }} />
+              <Text style={{ fontSize: 16, color: '#333' }}>{notifFocada?.lida ? "Marcar como não lida" : "Marcar como lida"}</Text>
+            </TouchableOpacity>
+            
+            {permissoesAtivas?.gerenciar_avisos && (
+              <TouchableOpacity onPress={() => {
+                setModalAcaoUnicaVisible(false);
+                setTimeout(() => setModalConfirmarVisible(true), 150);
+              }} style={{ padding: 18, flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="trash-outline" size={22} color="#d9534f" style={{ marginRight: 15 }} />
+                <Text style={{ fontSize: 16, color: '#d9534f' }}>Apagar aviso</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* MODAL DE SELEÇÃO DE PRODUTOS */}
+      <Modal visible={modalProdutosVisible} transparent={true} animationType="fade">
+        <TouchableOpacity 
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+          activeOpacity={1}
+          onPress={() => setModalProdutosVisible(false)}
+        >
+          <TouchableWithoutFeedback>
+            <View style={{ backgroundColor: '#fff', borderRadius: 15, width: '90%', padding: 20, maxHeight: '80%', shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 10 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>Vincular Produto</Text>
+                <TouchableOpacity onPress={() => setModalProdutosVisible(false)}>
+                  <Ionicons name="close" size={28} color="#999" />
+                </TouchableOpacity>
+              </View>
+
+              {listaProdutos.length === 0 ? (
+                <ActivityIndicator size="large" color="#007AFF" style={{ marginVertical: 30 }} />
+              ) : (
+                <FlatList
+                  data={listaProdutos}
+                  keyExtractor={item => item.id.toString()}
+                  showsVerticalScrollIndicator={false}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity 
+                      style={{ padding: 15, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => {
+                        setProdutoSelecionado(item);
+                        setModalProdutosVisible(false);
+                      }}
+                    >
+                      <Ionicons name="cube-outline" size={20} color="#64748b" style={{ marginRight: 10 }} />
+                      <Text style={{ fontSize: 16, color: '#333' }}>{item.nome}</Text>
+                    </TouchableOpacity>
+                  )}
+                />
+              )}
+            </View>
+          </TouchableWithoutFeedback>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* MODAL DE AJUSTE RÁPIDO DE ESTOQUE */}
+      <Modal visible={modalAjusteVisible} transparent={true} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 15, width: '85%', padding: 20, alignItems: 'center', elevation: 10 }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 5 }}>Ajuste de Estoque</Text>
+            <Text style={{ fontSize: 16, color: '#666', marginBottom: 20 }}>{produtoParaAjuste?.nome}</Text>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 25 }}>
+              <TouchableOpacity 
+                onPress={() => setNovaQuantidade(prev => Math.max(0, prev - 1))}
+                style={{ backgroundColor: '#f1f5f9', width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center' }}
+              >
+                <Ionicons name="remove" size={24} color="#333" />
+              </TouchableOpacity>
+
+              <TextInput 
+                keyboardType="numeric"
+                value={String(novaQuantidade)}
+                onChangeText={(txt) => setNovaQuantidade(Number(txt.replace(/[^0-9]/g, '')))}
+                style={{ fontSize: 32, fontWeight: 'bold', marginHorizontal: 30, color: '#007AFF', textAlign: 'center', width: 80 }}
+                selectTextOnFocus={true}
+              />
+
+              <TouchableOpacity 
+                onPress={() => setNovaQuantidade(prev => prev + 1)}
+                style={{ backgroundColor: '#f1f5f9', width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center' }}
+              >
+                <Ionicons name="add" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            {/* BOTÕES NO PADRÃO DO APP */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 10 }}>
+              <TouchableOpacity 
+                onPress={() => setModalAjusteVisible(false)}
+                style={{ flex: 1, backgroundColor: '#e2e8f0', padding: 15, borderRadius: 8, alignItems: 'center', marginRight: 10 }}
+              >
+                <Text style={{ color: '#64748b', fontWeight: 'bold', fontSize: 16 }}>Cancelar</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                onPress={salvarAjusteEstoque}
+                disabled={atualizandoEstoque}
+                style={{ flex: 1, backgroundColor: '#007AFF', padding: 15, borderRadius: 8, alignItems: 'center' }}
+              >
+                {atualizandoEstoque ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Confirmar</Text>}
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO (PADRÃO DO APP) */}
+      <Modal visible={modalConfirmarLimpeza} transparent={true} animationType="fade">
+        <TouchableOpacity 
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+          activeOpacity={1}
+          onPress={() => setModalConfirmarLimpeza(false)}
+        >
+          <TouchableWithoutFeedback>
+            <View style={{ backgroundColor: '#fff', borderRadius: 15, width: '85%', padding: 25, elevation: 10 }}>
+              
+              <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                <View style={{ backgroundColor: '#fee2e2', padding: 15, borderRadius: 50, marginBottom: 15 }}>
+                  <Ionicons name="trash" size={30} color="#ef4444" />
+                </View>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333', textAlign: 'center' }}>Limpar Tarefas</Text>
+                <Text style={{ fontSize: 14, color: '#64748b', textAlign: 'center', marginTop: 10, lineHeight: 20 }}>
+                  Tem certeza que deseja apagar permanentemente todas as tarefas concluídas? Esta ação não pode ser desfeita.
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
+                <TouchableOpacity 
+                  onPress={() => setModalConfirmarLimpeza(false)}
+                  style={{ flex: 1, backgroundColor: '#e2e8f0', padding: 15, borderRadius: 8, alignItems: 'center', marginRight: 10 }}
+                >
+                  <Text style={{ color: '#64748b', fontWeight: 'bold' }}>Cancelar</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  onPress={executarLimpezaDefinitiva}
+                  style={{ flex: 1, backgroundColor: '#ef4444', padding: 15, borderRadius: 8, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: 'bold' }}>Limpar</Text>
+                </TouchableOpacity>
+              </View>
+
+            </View>
+          </TouchableWithoutFeedback>
+        </TouchableOpacity>
+      </Modal>
+
+    </View>
+  );
+};
+
+// ----------------------
+// SCREEN: HISTÓRICO DE MOVIMENTAÇÕES
+// ----------------------
+
 const NotificacoesScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
   const permissoesAtivas = useStore(state => state.permissoesAtivas);
@@ -2645,7 +3702,10 @@ const NotificacoesScreen = ({ navigation }) => {
         usuario_id: user.id,
         tipo: diferenca > 0 ? 'ENTRADA' : 'SAIDA',
         quantidade: Math.abs(diferenca),
-        observacao: 'Ajuste rápido (Tarefas)'
+        preco_custo_hist: produtoParaAjuste.preco_custo,
+        preco_venda_hist: produtoParaAjuste.preco_venda,
+        is_venda: false,
+        observacao: 'Ajuste via aba de Tarefas'
       }]);
 
       // --- DISPARO DE NOTIFICAÇÕES (ALARMES) ---
@@ -2764,24 +3824,6 @@ const NotificacoesScreen = ({ navigation }) => {
           )}
         </View>
       </View>
-
-      {/* TOGGLE DE ABAS */}
-      {!selecionando && (
-        <View style={{ flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, marginHorizontal: 20, marginTop: 15, padding: 4 }}>
-          <TouchableOpacity 
-            onPress={() => {
-              setAbaAtiva('avisos');
-              carregarNotificacoes();
-            }} 
-            style={{ flex: 1, paddingVertical: 8, backgroundColor: abaAtiva === 'avisos' ? '#fff' : 'transparent', borderRadius: 6, alignItems: 'center', elevation: abaAtiva === 'avisos' ? 2 : 0 }}
-          >
-            <Text style={{ fontWeight: abaAtiva === 'avisos' ? 'bold' : '500', color: abaAtiva === 'avisos' ? '#333' : '#64748b' }}>Avisos do Sistema</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setAbaAtiva('afazeres')} style={{ flex: 1, paddingVertical: 8, backgroundColor: abaAtiva === 'afazeres' ? '#fff' : 'transparent', borderRadius: 6, alignItems: 'center', elevation: abaAtiva === 'afazeres' ? 2 : 0 }}>
-            <Text style={{ fontWeight: abaAtiva === 'afazeres' ? 'bold' : '500', color: abaAtiva === 'afazeres' ? '#333' : '#64748b' }}>Lista de Tarefas</Text>
-          </TouchableOpacity>
-        </View>
-      )}
 
       {/* === CONTEÚDO DA ABA: AVISOS === */}
       {abaAtiva === 'avisos' && (
@@ -3262,7 +4304,7 @@ const MovimentacoesScreen = ({ navigation }) => {
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator size="large" color="#007AFF" /></View>
       ) : movimentacoes.length === 0 ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        <View style={{ flex: 1, alignItems: 'center', paddingTop: '50%', paddingHorizontal: 20 }}>
           <Ionicons name="document-text-outline" size={64} color="#ccc" />
           <Text style={{ marginTop: 20, fontSize: 16, color: '#999', textAlign: 'center' }}>Nenhuma movimentação registrada ainda.</Text>
         </View>
@@ -3330,13 +4372,13 @@ const MainAppDrawer = () => {
       if (lojaAtiva.dono_id === user.id) {
         setPermissoesAtivas({
           quantidades: true, adicionar: true, editar: true, gerenciar: true, 
-          gerenciar_avisos: true, gerenciar_tarefas: true
+          gerenciar_avisos: true, gerenciar_tarefas: true, caixa: true, painel: true
         });
       } else {
         const { data } = await supabase
           .from('equipe')
           // Puxa a nova coluna do banco
-          .select('perm_editar_quantidades, perm_adicionar_produto, perm_editar_produto, perm_gerenciar_membros, perm_gerenciar_avisos, perm_gerenciar_tarefas') 
+          .select('perm_editar_quantidades, perm_adicionar_produto, perm_editar_produto, perm_gerenciar_membros, perm_gerenciar_avisos, perm_gerenciar_tarefas, perm_acessar_caixa, perm_acessar_painel') 
           .eq('loja_id', lojaAtiva.id)
           .eq('usuario_id', user.id)
           .maybeSingle();
@@ -3348,7 +4390,9 @@ const MainAppDrawer = () => {
             editar: data.perm_editar_produto,
             gerenciar: data.perm_gerenciar_membros,
             gerenciar_avisos: data.perm_gerenciar_avisos,
-            gerenciar_tarefas: data.perm_gerenciar_tarefas
+            gerenciar_tarefas: data.perm_gerenciar_tarefas,
+            caixa: data.perm_acessar_caixa !== false,
+            painel: data.perm_acessar_painel !== false
           });
         }
       }
@@ -3426,17 +4470,537 @@ const MainAppDrawer = () => {
       <Drawer.Screen 
         name="Home" 
         component={EmptyScreen} 
-        options={{ 
+        options={({ navigation }) => ({ 
           title: lojaAtiva ? lojaAtiva.nome : '', 
-          headerRight: () => (
-            <Text style={{ marginRight: 20, fontSize: 18, fontWeight: 'bold', color: '#007AFF', letterSpacing: 2 }}>
-              STOCKLY
-            </Text>
-          ),
+          headerRight: () => {
+            const unreadNotifCount = useStore(state => state.unreadNotifCount);
+            return (
+              <View style={{ flexDirection: 'row', marginRight: 15, alignItems: 'center' }}>
+                <TouchableOpacity onPress={() => navigation.navigate('Tarefas')} style={{ marginRight: 20 }}>
+                  <Ionicons name="clipboard-outline" size={26} color="#007AFF" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => navigation.navigate('Notificacoes')} style={{ marginRight: 5 }}>
+                  <View>
+                    <Ionicons name="notifications-outline" size={26} color="#007AFF" />
+                    {unreadNotifCount > 0 && (
+                      <View style={{ position: 'absolute', top: -4, right: -6, backgroundColor: '#d9534f', borderRadius: 10, minWidth: 18, height: 18, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4, borderWidth: 1, borderColor: '#fff' }}>
+                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{unreadNotifCount > 9 ? '9+' : unreadNotifCount}</Text>
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              </View>
+            );
+          },
           drawerItemStyle: { display: 'none' } 
-        }} 
+        })} 
       />
     </Drawer.Navigator>
+  );
+};
+
+const DashboardScreen = ({ navigation }) => {
+  const lojaAtiva = useStore(state => state.lojaAtiva);
+  const products = useStore(state => state.products);
+  
+  const [salesLoading, setSalesLoading] = useState(false);
+  const [salesTotal, setSalesTotal] = useState(0);
+  const [salesCount, setSalesCount] = useState(0);
+  const [filter, setFilter] = useState('7 Dias');
+
+  const filters = ['Hoje', '7 Dias', '30 Dias', 'Ano', 'Tudo'];
+
+  const totalInvestido = products.reduce((acc, p) => acc + (parseFloat(p.preco_custo || 0) * (p.estoque_atual || 0)), 0);
+  const valorBruto = products.reduce((acc, p) => acc + (parseFloat(p.preco_venda || 0) * (p.estoque_atual || 0)), 0);
+  const lucroProjetado = valorBruto - totalInvestido;
+
+  useEffect(() => {
+    const carregarVendas = async () => {
+      setSalesLoading(true);
+      try {
+        let query = supabase
+          .from('movimentacoes')
+          .select('quantidade, preco_venda_hist, produtos!inner(loja_id)')
+          .eq('is_venda', true)
+          .eq('produtos.loja_id', lojaAtiva.id);
+
+        if (filter !== 'Tudo') {
+          const hoje = new Date();
+          let dataLimite = new Date();
+          
+          if (filter === 'Hoje') {
+            dataLimite.setHours(0,0,0,0);
+          } else if (filter === '7 Dias') {
+            dataLimite.setDate(hoje.getDate() - 7);
+          } else if (filter === '30 Dias') {
+            dataLimite.setDate(hoje.getDate() - 30);
+          } else if (filter === 'Ano') {
+            dataLimite.setFullYear(hoje.getFullYear() - 1);
+          }
+          query = query.gte('criado_em', dataLimite.toISOString());
+        }
+
+        const { data, error } = await query;
+
+        if (error) throw error;
+
+        let total = 0;
+        let count = 0;
+        if (data) {
+          data.forEach(mov => {
+            total += (mov.quantidade * (mov.preco_venda_hist || 0));
+            count += mov.quantidade;
+          });
+        }
+        setSalesTotal(total);
+        setSalesCount(count);
+
+      } catch (err) {
+        console.log("Erro ao carregar vendas:", err.message);
+      } finally {
+        setSalesLoading(false);
+      }
+    };
+    
+    if (lojaAtiva) {
+      carregarVendas();
+    }
+  }, [lojaAtiva, filter]);
+
+  const formatCurrency = (val) => {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#f0f4f8' }}>
+      <View style={{ paddingTop: Platform.OS === 'android' ? 40 : 50, paddingBottom: 15, paddingHorizontal: 20, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#e0e5ea' }}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginRight: 15 }}>
+          <Ionicons name="arrow-back" size={28} color="#333" />
+        </TouchableOpacity>
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#1a202c' }}>Dashboard Financeiro</Text>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: 20 }}>
+        
+        {/* Vendas Card */}
+        <LinearGradient
+          colors={['#007AFF', '#0056b3']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{ borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 8 }}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+            <Text style={{ color: '#e6f2ff', fontSize: 16, fontWeight: '600' }}>Vendas Realizadas</Text>
+            <Ionicons name="cart" size={24} color="#fff" />
+          </View>
+          
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20, marginHorizontal: -5 }}>
+            {filters.map(f => (
+              <TouchableOpacity
+                key={f}
+                onPress={() => setFilter(f)}
+                style={{
+                  backgroundColor: filter === f ? '#fff' : 'rgba(255,255,255,0.2)',
+                  paddingHorizontal: 15,
+                  paddingVertical: 6,
+                  borderRadius: 20,
+                  marginHorizontal: 5
+                }}
+              >
+                <Text style={{ color: filter === f ? '#007AFF' : '#fff', fontWeight: 'bold', fontSize: 12 }}>{f}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          <View style={{ height: 75, justifyContent: 'center' }}>
+            {salesLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <View>
+                <Text style={{ color: '#fff', fontSize: 36, fontWeight: 'bold' }}>{formatCurrency(salesTotal)}</Text>
+                <Text style={{ color: '#b3d9ff', fontSize: 14, marginTop: 4 }}>{salesCount} item(s) vendidos</Text>
+              </View>
+            )}
+          </View>
+        </LinearGradient>
+
+        {/* Resumo do Estoque Atual */}
+        <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#2d3748', marginBottom: 15, marginTop: 10 }}>Retrato do Estoque Atual</Text>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 }}>
+          <View style={{ flex: 1, backgroundColor: '#fff', padding: 15, borderRadius: 16, marginRight: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
+            <Ionicons name="cube-outline" size={24} color="#4a5568" marginBottom={10} />
+            <Text style={{ color: '#718096', fontSize: 12, fontWeight: '600' }}>Custo Investido</Text>
+            <Text style={{ color: '#2d3748', fontSize: 18, fontWeight: 'bold', marginTop: 5 }}>{formatCurrency(totalInvestido)}</Text>
+          </View>
+          
+          <View style={{ flex: 1, backgroundColor: '#fff', padding: 15, borderRadius: 16, marginLeft: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
+            <Ionicons name="pricetag-outline" size={24} color="#4a5568" marginBottom={10} />
+            <Text style={{ color: '#718096', fontSize: 12, fontWeight: '600' }}>Receita Bruta</Text>
+            <Text style={{ color: '#2d3748', fontSize: 18, fontWeight: 'bold', marginTop: 5 }}>{formatCurrency(valorBruto)}</Text>
+          </View>
+        </View>
+
+        <LinearGradient
+          colors={['#4CAF50', '#2E7D32']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{ borderRadius: 16, padding: 20, shadowColor: '#4CAF50', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 8 }}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View>
+              <Text style={{ color: '#e8f5e9', fontSize: 14, fontWeight: '600' }}>Lucro Projetado (Físico)</Text>
+              <Text style={{ color: '#fff', fontSize: 28, fontWeight: 'bold', marginTop: 5 }}>{formatCurrency(lucroProjetado)}</Text>
+            </View>
+            <Ionicons name="trending-up" size={40} color="rgba(255,255,255,0.8)" />
+          </View>
+        </LinearGradient>
+
+      </ScrollView>
+    </View>
+  );
+};
+
+const PdvScreen = ({ navigation }) => {
+  const lojaAtiva = useStore(state => state.lojaAtiva);
+  const products = useStore(state => state.products);
+  const setProducts = useStore(state => state.setProducts);
+  
+  const carrinho = useStore(state => state.carrinhoGlobal);
+  const setCarrinho = useStore(state => state.setCarrinhoGlobal);
+  const setUnreadNotifCount = useStore(state => state.setUnreadNotifCount);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const [isCameraVisible, setIsCameraVisible] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  
+  const [editandoQuantidadeId, setEditandoQuantidadeId] = useState(null);
+  const [tempQtd, setTempQtd] = useState('');
+
+  const totalItens = carrinho.reduce((acc, item) => acc + item.quantidade, 0);
+
+  const openCamera = async () => {
+    if (!permission?.granted) {
+      const { granted } = await requestPermission();
+      if (!granted) {
+        Alert.alert("Permissão negada", "Precisamos de acesso à câmera para escanear códigos.");
+        return;
+      }
+    }
+    setIsCameraVisible(true);
+    setIsScanning(true);
+  };
+
+  const handleBarcodeScanned = ({ type, data }) => {
+    setIsScanning(false);
+    const produtoEncontrado = products.find(p => p.sku_barcode === data);
+    if (produtoEncontrado) {
+      adicionarAoCarrinho(produtoEncontrado);
+      setIsCameraVisible(false);
+    } else {
+      Alert.alert("Não encontrado", `Nenhum produto com o código ${data} foi localizado no estoque.`);
+      setTimeout(() => setIsScanning(true), 2000);
+    }
+  };
+
+  const total = carrinho.reduce((acc, item) => acc + (item.preco_venda * item.quantidade), 0);
+
+  const filteredProducts = products.filter(p => 
+    p.nome.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    (p.sku_barcode && p.sku_barcode.includes(searchQuery))
+  );
+
+  const adicionarAoCarrinho = (produto) => {
+    setCarrinho(prev => {
+      const existe = prev.find(p => p.id === produto.id);
+      if (existe) {
+        if (existe.quantidade >= produto.estoque_atual) {
+          Alert.alert("Estoque insuficiente", `Você só tem ${produto.estoque_atual} em estoque.`);
+          return prev;
+        }
+        return prev.map(p => p.id === produto.id ? { ...p, quantidade: p.quantidade + 1 } : p);
+      } else {
+        if (produto.estoque_atual <= 0) {
+          Alert.alert("Sem estoque", "Este produto está zerado no estoque.");
+          return prev;
+        }
+        return [...prev, { ...produto, quantidade: 1 }];
+      }
+    });
+    setSearchQuery('');
+  };
+
+  const removerDoCarrinho = (id) => {
+    setCarrinho(prev => prev.filter(item => item.id !== id));
+  };
+
+  const salvarQuantidadeDigitada = (id, estoqueMaximo) => {
+    const num = parseInt(tempQtd, 10);
+    setEditandoQuantidadeId(null);
+    if (isNaN(num) || num <= 0) return;
+    
+    setCarrinho(prev => prev.map(item => {
+      if (item.id === id) {
+        if (num > estoqueMaximo) {
+          Alert.alert("Estoque insuficiente", `Você só tem ${estoqueMaximo} disponíveis.`);
+          return item;
+        }
+        return { ...item, quantidade: num };
+      }
+      return item;
+    }));
+  };
+
+  const alterarQuantidade = (id, delta) => {
+    setCarrinho(prev => {
+      return prev.map(item => {
+        if (item.id === id) {
+          const novaQtd = item.quantidade + delta;
+          if (novaQtd <= 0) return null;
+          if (novaQtd > item.estoque_atual) {
+            Alert.alert("Estoque insuficiente", `Você só tem ${item.estoque_atual} disponíveis.`);
+            return item;
+          }
+          return { ...item, quantidade: novaQtd };
+        }
+        return item;
+      }).filter(Boolean);
+    });
+  };
+
+  const finalizarVenda = async () => {
+    if (carrinho.length === 0) return;
+    setIsProcessing(true);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      const movimentos = carrinho.map(item => ({
+        produto_id: item.id,
+        usuario_id: user.id,
+        tipo: 'SAIDA',
+        quantidade: item.quantidade,
+        is_venda: true,
+        preco_custo_hist: item.preco_custo,
+        preco_venda_hist: item.preco_venda,
+        observacao: 'Venda via Caixa'
+      }));
+
+      const { error: errMov } = await supabase.from('movimentacoes').insert(movimentos);
+      if (errMov) throw errMov;
+
+      const novasNotificacoes = [];
+
+      for (const item of carrinho) {
+        const novoEstoque = item.estoque_atual - item.quantidade;
+        await supabase.from('produtos').update({ estoque_atual: novoEstoque }).eq('id', item.id);
+
+        if (item.notificar_movimentacao) {
+          novasNotificacoes.push({
+            loja_id: lojaAtiva.id,
+            produto_id: item.id,
+            mensagem: `Movimentação: -${item.quantidade} unidade(s) de ${item.nome} (Venda PDV).`,
+            tipo: 'movimentacao'
+          });
+        }
+
+        if (item.notificar_minimo && novoEstoque <= item.estoque_minimo) {
+          novasNotificacoes.push({
+            loja_id: lojaAtiva.id,
+            produto_id: item.id,
+            mensagem: `Atenção: O estoque de ${item.nome} chegou a ${novoEstoque} (Mínimo: ${item.estoque_minimo}).`,
+            tipo: 'alerta_minimo'
+          });
+        }
+      }
+
+      if (novasNotificacoes.length > 0) {
+        const { error: errorNotif } = await supabase.from('notificacoes').insert(novasNotificacoes);
+        if (errorNotif) console.log("Erro ao gerar notificação de venda:", errorNotif);
+        else setUnreadNotifCount(prev => prev + novasNotificacoes.length);
+      }
+
+      const novosProdutos = products.map(p => {
+        const itemVendido = carrinho.find(c => c.id === p.id);
+        if (itemVendido) return { ...p, estoque_atual: p.estoque_atual - itemVendido.quantidade };
+        return p;
+      });
+      setProducts(novosProdutos);
+
+      setCarrinho([]);
+      navigation.goBack();
+    } catch (err) {
+      Alert.alert("Erro ao finalizar", err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#f0f4f8' }}>
+      <View style={{ paddingTop: Platform.OS === 'android' ? 40 : 50, paddingBottom: 15, paddingHorizontal: 20, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#e0e5ea' }}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginRight: 15 }}>
+          <Ionicons name="close" size={28} color="#333" />
+        </TouchableOpacity>
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#1a202c' }}>Caixa (Vender)</Text>
+      </View>
+
+      <View style={{ flex: 1, flexDirection: 'column' }}>
+        <FlatList
+          data={carrinho}
+          keyExtractor={item => item.id.toString()}
+          contentContainerStyle={{ padding: 15, paddingTop: 80 }}
+          ListEmptyComponent={
+            <View style={{ alignItems: 'center', marginTop: 100 }}>
+              <Ionicons name="cart-outline" size={64} color="#ccc" />
+              <Text style={{ color: '#999', marginTop: 10 }}>O carrinho está vazio.</Text>
+            </View>
+          }
+          renderItem={({ item }) => (
+            <View style={{ backgroundColor: '#fff', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1, position: 'relative' }}>
+              <TouchableOpacity onPress={() => removerDoCarrinho(item.id)} style={{ position: 'absolute', top: -8, right: -8, width: 26, height: 26, backgroundColor: '#ef4444', borderRadius: 13, justifyContent: 'center', alignItems: 'center', zIndex: 10, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 2 }}>
+                <Ionicons name="close" size={18} color="#fff" />
+              </TouchableOpacity>
+
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.nome}</Text>
+                <Text style={{ fontSize: 14, color: '#007AFF', marginTop: 4 }}>{formatCurrency(item.preco_venda)}</Text>
+              </View>
+              
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8f9fa', borderRadius: 8, padding: 4 }}>
+                <TouchableOpacity onPress={() => alterarQuantidade(item.id, -1)} style={{ width: 36, height: 36, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', elevation: 1 }}>
+                  <Ionicons name="remove" size={20} color="#333" />
+                </TouchableOpacity>
+
+                {editandoQuantidadeId === item.id ? (
+                  <TextInput
+                    style={{ width: 45, height: 36, textAlign: 'center', fontSize: 16, fontWeight: 'bold', color: '#333', backgroundColor: '#e2e8f0', borderRadius: 4, padding: 0 }}
+                    value={tempQtd}
+                    onChangeText={setTempQtd}
+                    keyboardType="numeric"
+                    autoFocus
+                    selectTextOnFocus={true}
+                    onBlur={() => salvarQuantidadeDigitada(item.id, item.estoque_atual)}
+                    onSubmitEditing={() => salvarQuantidadeDigitada(item.id, item.estoque_atual)}
+                  />
+                ) : (
+                  <TouchableOpacity onPress={() => { setEditandoQuantidadeId(item.id); setTempQtd(String(item.quantidade)); }} style={{ width: 45, height: 36, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>{item.quantidade}</Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity onPress={() => alterarQuantidade(item.id, 1)} style={{ width: 36, height: 36, backgroundColor: '#fff', borderRadius: 6, justifyContent: 'center', alignItems: 'center', elevation: 1 }}>
+                  <Ionicons name="add" size={20} color="#333" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        />
+
+        {/* Barra de Busca e Scanner sobreposta à lista (Movida para o final do DOM para garantir toques no Android) */}
+        <View style={{ 
+          position: 'absolute',
+          top: 0, left: 0, right: 0,
+          paddingHorizontal: 15, paddingTop: 15, paddingBottom: 10, 
+          backgroundColor: 'transparent', zIndex: 10 
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48 }}>
+              <Ionicons name="search" size={20} color="#64748b" />
+              <TextInput 
+                placeholder="Buscar produto para vender..." 
+                placeholderTextColor="#94a3b8"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }}
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <Ionicons name="close-circle" size={20} color="#94a3b8" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <TouchableOpacity 
+              style={{ marginLeft: 10, backgroundColor: '#007AFF', width: 48, height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }} 
+              onPress={openCamera}
+            >
+              <Ionicons name="barcode-outline" size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          {searchQuery.length > 0 && (
+            <View style={{ position: 'absolute', top: 70, left: 15, right: 15, backgroundColor: '#fff', borderRadius: 8, elevation: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5, zIndex: 10, maxHeight: 200 }}>
+              <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
+                {filteredProducts.slice(0, 50).map(p => (
+                  <TouchableOpacity key={p.id} onPress={() => adicionarAoCarrinho(p)} style={{ padding: 15, borderBottomWidth: 1, borderColor: '#f1f5f9', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View style={{ flex: 1, paddingRight: 10 }}>
+                      <Text style={{ fontWeight: 'bold', color: '#333' }} numberOfLines={1}>{p.nome}</Text>
+                      <Text style={{ fontSize: 12, color: '#888' }}>Estoque: {p.estoque_atual}</Text>
+                    </View>
+                    <Text style={{ color: '#007AFF', fontWeight: 'bold', flexShrink: 0 }}>{formatCurrency(p.preco_venda || 0)}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+        </View>
+
+        <View style={{ backgroundColor: '#fff', padding: 20, borderTopWidth: 1, borderColor: '#eee', elevation: 10, zIndex: 1 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+            <Text style={{ fontSize: 14, color: '#888' }}>Itens no carrinho</Text>
+            <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#333' }}>{totalItens}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+            <Text style={{ fontSize: 16, color: '#666' }}>Total da Venda</Text>
+            <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#007AFF' }}>{formatCurrency(total)}</Text>
+          </View>
+          
+          <TouchableOpacity onPress={finalizarVenda} disabled={carrinho.length === 0 || isProcessing} style={{ backgroundColor: carrinho.length === 0 ? '#ccc' : '#4CAF50', padding: 16, borderRadius: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}>
+            {isProcessing ? <ActivityIndicator color="#fff" /> : (
+              <>
+                <Ionicons name="checkmark-circle-outline" size={24} color="#fff" style={{ marginRight: 8 }} />
+                <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>Finalizar Venda</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
+      </View>
+
+      {/* Modal da Câmera do Caixa */}
+      <Modal visible={isCameraVisible} animationType="slide" onRequestClose={() => setIsCameraVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+          <View style={{ padding: 20, paddingTop: Platform.OS === 'android' ? 40 : 50, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>Escanear Produto</Text>
+            <TouchableOpacity onPress={() => setIsCameraVisible(false)} style={{ padding: 8, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20 }}>
+              <Ionicons name="close" size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          
+          <View style={{ flex: 1 }}>
+            <CameraView
+              style={{ flex: 1 }}
+              facing="back"
+              onBarcodeScanned={isScanning ? handleBarcodeScanned : undefined}
+              barcodeScannerSettings={{
+                barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "qr"],
+              }}
+            />
+            
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' }}>
+              <View style={{ width: 250, height: 150, borderWidth: 3, borderColor: '#4CAF50', borderRadius: 10, backgroundColor: 'transparent' }} />
+              <Text style={{ color: '#fff', marginTop: 30, backgroundColor: 'rgba(0,0,0,0.7)', padding: 10, borderRadius: 8, fontSize: 16 }}>
+                Alinhe o código do produto na caixa
+              </Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 };
 
@@ -3452,7 +5016,10 @@ const MainAppNavigator = () => (
     <Stack.Screen name="Drawer" component={MainAppDrawer} />
     <Stack.Screen name="Movimentacoes" component={MovimentacoesScreen} />
     <Stack.Screen name="Notificacoes" component={NotificacoesScreen} />
+    <Stack.Screen name="Tarefas" component={TarefasScreen} />
     <Stack.Screen name="Equipe" component={EquipeScreen} />
+    <Stack.Screen name="Dashboard" component={DashboardScreen} />
+    <Stack.Screen name="PDV" component={PdvScreen} />
   </Stack.Navigator>
 );
 
