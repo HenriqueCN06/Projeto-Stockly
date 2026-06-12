@@ -4518,6 +4518,7 @@ const DashboardScreen = ({ navigation }) => {
   const [intelFilter, setIntelFilter] = useState('30 Dias');
   const [intelStats, setIntelStats] = useState([]);
   const [intelTotals, setIntelTotals] = useState({ receita: 0, lucro: 0, bestDay: '' });
+  const [bestDayMetric, setBestDayMetric] = useState('Receita');
   const [intelInsights, setIntelInsights] = useState([]);
   const [intelLoading, setIntelLoading] = useState(false);
   const [intelSelectedProduct, setIntelSelectedProduct] = useState(null);
@@ -4676,8 +4677,21 @@ const DashboardScreen = ({ navigation }) => {
         const { data, error } = await query;
         if (error) throw error;
 
+        // Opção B: Buscar o valor total do estoque atual da loja
+        const { data: todosProd, error: errProd } = await supabase.from('produtos').select('estoque_atual, preco_custo').eq('loja_id', lojaAtiva.id).eq('ativo', true);
+        if (errProd) throw errProd;
+
+        let totalEstoqueAtualValor = 0;
+        if (todosProd) {
+          todosProd.forEach(p => {
+            totalEstoqueAtualValor += (p.estoque_atual || 0) * (p.preco_custo || 0);
+          });
+        }
+
         let totalR = 0;
         let totalL = 0;
+        let totalQtdVendida = 0;
+        let totalCustoVendido = 0;
         let diasStats = {};
         let pStats = {};
 
@@ -4695,10 +4709,14 @@ const DashboardScreen = ({ navigation }) => {
 
             totalR += rec;
             totalL += luc;
+            totalQtdVendida += qtd;
+            totalCustoVendido += totalCustoItem;
 
             const diaDaSemana = new Date(mov.criado_em).toLocaleDateString('pt-BR', { weekday: 'long' });
-            if (!diasStats[diaDaSemana]) diasStats[diaDaSemana] = 0;
-            diasStats[diaDaSemana] += rec;
+            if (!diasStats[diaDaSemana]) diasStats[diaDaSemana] = { receita: 0, lucro: 0, qtd: 0 };
+            diasStats[diaDaSemana].receita += rec;
+            diasStats[diaDaSemana].lucro += luc;
+            diasStats[diaDaSemana].qtd += qtd;
 
             const estoqueAtual = mov.produtos.estoque_atual || 0;
             if (!pStats[pid]) pStats[pid] = { id: pid, nome: pnome, receita: 0, lucro: 0, qtd: 0, custo: 0, estoqueAtual: estoqueAtual, custoUnitario: custo };
@@ -4709,13 +4727,33 @@ const DashboardScreen = ({ navigation }) => {
           });
         }
 
-        let bestDayName = '-';
+        let bestDayReceita = '-';
+        let bestDayLucro = '-';
+        let bestDayQtd = '-';
         if (Object.keys(diasStats).length > 0) {
-           bestDayName = Object.keys(diasStats).reduce((a, b) => diasStats[a] > diasStats[b] ? a : b);
-           bestDayName = bestDayName.charAt(0).toUpperCase() + bestDayName.slice(1);
+           const days = Object.keys(diasStats);
+           const bReceita = days.reduce((a, b) => diasStats[a].receita > diasStats[b].receita ? a : b);
+           const bLucro = days.reduce((a, b) => diasStats[a].lucro > diasStats[b].lucro ? a : b);
+           const bQtd = days.reduce((a, b) => diasStats[a].qtd > diasStats[b].qtd ? a : b);
+           
+           bestDayReceita = bReceita.charAt(0).toUpperCase() + bReceita.slice(1);
+           bestDayLucro = bLucro.charAt(0).toUpperCase() + bLucro.slice(1);
+           bestDayQtd = bQtd.charAt(0).toUpperCase() + bQtd.slice(1);
         }
 
-        setIntelTotals({ receita: totalR, lucro: totalL, bestDay: bestDayName });
+        const investimentoTotalLoja = totalEstoqueAtualValor + totalCustoVendido;
+        const rentabilidadeGeral = investimentoTotalLoja > 0 ? (totalL / investimentoTotalLoja) * 100 : 0;
+        const margemMedia = totalR > 0 ? (totalL / totalR) * 100 : 0;
+
+        setIntelTotals({ 
+          receita: totalR, 
+          lucro: totalL, 
+          qtdTotal: totalQtdVendida,
+          investimentoTotal: investimentoTotalLoja,
+          rentabilidadeGeral: rentabilidadeGeral,
+          margemMedia: margemMedia,
+          bestDay: { Receita: bestDayReceita, Lucro: bestDayLucro, 'Unidades Vendidas': bestDayQtd }
+        });
 
         let arrStats = Object.values(pStats).map(p => {
           p.margem = p.receita > 0 ? ((p.lucro / p.receita) * 100) : 0;
@@ -5222,7 +5260,7 @@ const DashboardScreen = ({ navigation }) => {
         <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="bulb" size={24} color="#d69e2e" style={{ marginRight: 8 }} />
+              <Ionicons name="bulb" size={24} color="#3182ce" style={{ marginRight: 8 }} />
               <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Inteligência & Desempenho</Text>
             </View>
           </View>
@@ -5230,7 +5268,7 @@ const DashboardScreen = ({ navigation }) => {
           {/* Filtros da Seção */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15, marginHorizontal: -20, paddingHorizontal: 20 }}>
             {['7 Dias', '30 Dias', 'Ano', 'Tudo'].map((f) => (
-              <TouchableOpacity key={f} onPress={() => setIntelFilter(f)} style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, backgroundColor: intelFilter === f ? '#d69e2e' : '#f0f4f8', marginRight: 10 }}>
+              <TouchableOpacity key={f} onPress={() => setIntelFilter(f)} style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, backgroundColor: intelFilter === f ? '#3182ce' : '#f0f4f8', marginRight: 10 }}>
                 <Text style={{ color: intelFilter === f ? '#fff' : '#4a5568', fontWeight: 'bold', fontSize: 13 }}>{f}</Text>
               </TouchableOpacity>
             ))}
@@ -5238,7 +5276,7 @@ const DashboardScreen = ({ navigation }) => {
           </ScrollView>
 
           {intelLoading ? (
-            <ActivityIndicator color="#d69e2e" style={{ marginVertical: 30 }} />
+            <ActivityIndicator color="#3182ce" style={{ marginVertical: 30 }} />
           ) : (
             <>
               {/* Insights */}
@@ -5259,20 +5297,52 @@ const DashboardScreen = ({ navigation }) => {
 
               {/* Estatísticas Gerais */}
               <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Visão Geral da Loja ({intelFilter})</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 20 }}>
-                <View style={{ width: '48%', backgroundColor: '#f8fafc', padding: 12, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
-                  <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>CMV Total</Text>
-                  <Text style={{ fontSize: 14, color: '#2d3748', fontWeight: 'bold', marginTop: 4 }}>{formatCurrency(intelTotals.receita - intelTotals.lucro)}</Text>
+              <View style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', padding: 15, marginBottom: 20 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <View>
+                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>UNIDADES VENDIDAS</Text>
+                    <Text style={{ fontSize: 16, color: '#2d3748', fontWeight: 'bold' }}>{intelTotals.qtdTotal || 0} un</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>MARGEM MÉDIA</Text>
+                    <Text style={{ fontSize: 16, color: (intelTotals.margemMedia || 0) >= 20 ? '#38a169' : '#e53e3e', fontWeight: 'bold' }}>{(intelTotals.margemMedia || 0).toFixed(1)}%</Text>
+                  </View>
                 </View>
-                <View style={{ width: '48%', backgroundColor: '#f8fafc', padding: 12, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
-                  <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>Margem Média</Text>
-                  <Text style={{ fontSize: 14, color: intelTotals.receita > 0 && (intelTotals.lucro/intelTotals.receita)*100 >= 20 ? '#38a169' : '#e53e3e', fontWeight: 'bold', marginTop: 4 }}>
-                    {intelTotals.receita > 0 ? ((intelTotals.lucro / intelTotals.receita) * 100).toFixed(1) : '0'}%
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <View>
+                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RECEITA GERADA</Text>
+                    <Text style={{ fontSize: 15, color: '#2d3748', fontWeight: 'bold' }}>{formatCurrency(intelTotals.receita || 0)}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>LUCRO LÍQUIDO</Text>
+                    <Text style={{ fontSize: 15, color: '#38a169', fontWeight: 'bold' }}>{formatCurrency(intelTotals.lucro || 0)}</Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderColor: '#edf2f7' }}>
+                  <View>
+                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>CAPITAL INVESTIDO</Text>
+                    <Text style={{ fontSize: 15, color: '#4a5568', fontWeight: 'bold' }}>{formatCurrency(intelTotals.investimentoTotal || 0)}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RENTABILIDADE (ROI)</Text>
+                    <Text style={{ fontSize: 15, color: '#d69e2e', fontWeight: 'bold' }}>{(intelTotals.rentabilidadeGeral || 0).toFixed(1)}%</Text>
+                  </View>
+                </View>
+                <View style={{ backgroundColor: '#f8fafc', padding: 12, borderRadius: 8, marginTop: 5, alignItems: 'center' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 8 }}>
+                    {['Receita', 'Lucro', 'Unidades Vendidas'].map(m => (
+                      <TouchableOpacity 
+                        key={m} 
+                        onPress={() => setBestDayMetric(m)}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: bestDayMetric === m ? '#3182ce' : '#edf2f7', borderRadius: 16, marginHorizontal: 4 }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: 'bold', color: bestDayMetric === m ? '#fff' : '#718096' }}>{m}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={{ fontSize: 12, color: '#4a5568', textAlign: 'center' }}>
+                    O melhor dia da semana em <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{bestDayMetric.toLowerCase()}</Text> é a <Text style={{ fontWeight: 'bold', color: '#3182ce' }}>{(intelTotals.bestDay && typeof intelTotals.bestDay === 'object') ? intelTotals.bestDay[bestDayMetric] : '-'}</Text>.
                   </Text>
-                </View>
-                <View style={{ width: '100%', backgroundColor: '#f8fafc', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
-                  <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>Melhor Dia de Venda</Text>
-                  <Text style={{ fontSize: 14, color: '#d69e2e', fontWeight: 'bold', marginTop: 4 }}>{intelTotals.bestDay || 'Nenhum'}</Text>
                 </View>
               </View>
 
