@@ -9,6 +9,7 @@ import { createDrawerNavigator, DrawerContentScrollView, DrawerItemList } from '
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { LineChart } from 'react-native-chart-kit';
 
 // IMPORTAÇÃO DO BANCO DE DADOS
 import { supabase } from './src/services/supabase';
@@ -4508,6 +4509,14 @@ const DashboardScreen = ({ navigation }) => {
   const [salesCount, setSalesCount] = useState(0);
   const [filter, setFilter] = useState('7 Dias');
 
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [chartMetric, setChartMetric] = useState('Receita');
+  const [chartData, setChartData] = useState(null);
+  const [chartLoading, setChartLoading] = useState(false);
+
+  const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
   const filters = ['Hoje', '7 Dias', '30 Dias', 'Ano', 'Tudo'];
 
   const totalInvestido = products.reduce((acc, p) => acc + (parseFloat(p.preco_custo || 0) * (p.estoque_atual || 0)), 0);
@@ -4567,6 +4576,77 @@ const DashboardScreen = ({ navigation }) => {
     }
   }, [lojaAtiva, filter]);
 
+  useEffect(() => {
+    const carregarGrafico = async () => {
+      setChartLoading(true);
+      try {
+        const dateStart = new Date(selectedYear, selectedMonth, 1);
+        const dateEnd = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
+
+        const { data, error } = await supabase
+          .from('movimentacoes')
+          .select('quantidade, preco_venda_hist, preco_custo_hist, criado_em, produtos!inner(loja_id)')
+          .eq('is_venda', true)
+          .eq('produtos.loja_id', lojaAtiva.id)
+          .gte('criado_em', dateStart.toISOString())
+          .lte('criado_em', dateEnd.toISOString());
+
+        if (error) throw error;
+
+        const daysInMonth = dateEnd.getDate();
+        const aggregated = Array(daysInMonth).fill(0);
+
+        if (data) {
+          data.forEach(mov => {
+            const date = new Date(mov.criado_em);
+            const dayIndex = date.getDate() - 1;
+
+            const qtd = mov.quantidade || 0;
+            const venda = mov.preco_venda_hist || 0;
+            const custo = mov.preco_custo_hist || 0;
+
+            if (chartMetric === 'Receita') {
+              aggregated[dayIndex] += (qtd * venda);
+            } else if (chartMetric === 'Lucro') {
+              aggregated[dayIndex] += (qtd * (venda - custo));
+            } else if (chartMetric === 'Itens') {
+              aggregated[dayIndex] += qtd;
+            }
+          });
+        }
+
+        const labels = Array(daysInMonth).fill(0).map((_, i) => {
+          const day = i + 1;
+          if (day === 1 || day === daysInMonth || day % 5 === 0) return day.toString();
+          return '';
+        });
+
+        // Só exibe se houver algum valor maior que 0
+        if (aggregated.some(val => val > 0)) {
+          setChartData({
+            labels,
+            datasets: [
+              {
+                data: aggregated,
+                color: (opacity = 1) => chartMetric === 'Lucro' ? `rgba(40, 167, 69, ${opacity})` : (chartMetric === 'Itens' ? `rgba(255, 152, 0, ${opacity})` : `rgba(0, 122, 255, ${opacity})`),
+                strokeWidth: 3
+              }
+            ]
+          });
+        } else {
+          setChartData(null);
+        }
+
+      } catch (err) {
+        console.log("Erro ao carregar gráfico:", err.message);
+      } finally {
+        setChartLoading(false);
+      }
+    };
+
+    if (lojaAtiva) carregarGrafico();
+  }, [lojaAtiva, selectedMonth, selectedYear, chartMetric]);
+
   const formatCurrency = (val) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
   };
@@ -4623,6 +4703,88 @@ const DashboardScreen = ({ navigation }) => {
             )}
           </View>
         </LinearGradient>
+
+        {/* Gráfico Histórico */}
+        <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+            <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1a202c' }}>Evolução Mensal</Text>
+            
+            {/* Seletor de Mês/Ano */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f4f8', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
+              <TouchableOpacity onPress={() => {
+                if (selectedMonth === 0) { setSelectedMonth(11); setSelectedYear(y => y - 1); }
+                else { setSelectedMonth(m => m - 1); }
+              }}>
+                <Ionicons name="chevron-back" size={20} color="#007AFF" />
+              </TouchableOpacity>
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#007AFF', marginHorizontal: 8, minWidth: 65, textAlign: 'center' }}>
+                {months[selectedMonth]} {selectedYear}
+              </Text>
+              <TouchableOpacity onPress={() => {
+                if (selectedMonth === 11) { setSelectedMonth(0); setSelectedYear(y => y + 1); }
+                else { setSelectedMonth(m => m + 1); }
+              }}>
+                <Ionicons name="chevron-forward" size={20} color="#007AFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Filtros de Métrica */}
+          <View style={{ flexDirection: 'row', marginBottom: 20 }}>
+            {['Receita', 'Lucro', 'Itens'].map(metric => (
+              <TouchableOpacity
+                key={metric}
+                onPress={() => setChartMetric(metric)}
+                style={{
+                  backgroundColor: chartMetric === metric ? (metric === 'Lucro' ? '#28a745' : metric === 'Itens' ? '#ff9800' : '#007AFF') : '#f0f4f8',
+                  paddingHorizontal: 15,
+                  paddingVertical: 6,
+                  borderRadius: 20,
+                  marginRight: 10
+                }}
+              >
+                <Text style={{ color: chartMetric === metric ? '#fff' : '#666', fontWeight: 'bold', fontSize: 12 }}>
+                  {metric}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Área do Gráfico */}
+          <View style={{ alignItems: 'center', minHeight: 220, justifyContent: 'center' }}>
+            {chartLoading ? (
+              <ActivityIndicator size="large" color="#007AFF" />
+            ) : chartData ? (
+              <LineChart
+                data={chartData}
+                width={Dimensions.get("window").width - 80} // Width of card minus padding
+                height={220}
+                withDots={false}
+                withInnerLines={false}
+                withOuterLines={false}
+                yAxisLabel={chartMetric === 'Itens' ? '' : 'R$ '}
+                yAxisSuffix={chartMetric === 'Itens' ? ' un' : ''}
+                chartConfig={{
+                  backgroundColor: "#fff",
+                  backgroundGradientFrom: "#fff",
+                  backgroundGradientTo: "#fff",
+                  decimalPlaces: chartMetric === 'Itens' ? 0 : 0, // Formatação sem decimais para ficar limpo
+                  color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+                  labelColor: (opacity = 1) => `rgba(100, 100, 100, ${opacity})`,
+                  style: { borderRadius: 16 },
+                  propsForDots: { r: "0" }
+                }}
+                bezier
+                style={{ marginVertical: 8, borderRadius: 16 }}
+              />
+            ) : (
+              <View style={{ alignItems: 'center' }}>
+                <Ionicons name="bar-chart-outline" size={48} color="#ccc" />
+                <Text style={{ color: '#999', marginTop: 10 }}>Nenhuma venda neste mês.</Text>
+              </View>
+            )}
+          </View>
+        </View>
 
         {/* Resumo do Estoque Atual */}
         <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#2d3748', marginBottom: 15, marginTop: 10 }}>Retrato do Estoque Atual</Text>
