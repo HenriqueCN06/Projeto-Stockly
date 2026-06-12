@@ -4503,89 +4503,287 @@ const MainAppDrawer = () => {
 const DashboardScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
   const products = useStore(state => state.products);
+  const meuId = useStore(state => state.session?.user?.id);
   
+  // =================== STATES DA TELA ===================
+  // 1. Resumo Principal
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesTotal, setSalesTotal] = useState(0);
   const [salesCount, setSalesCount] = useState(0);
+  const [salesTotalPrev, setSalesTotalPrev] = useState(0);
   const [filter, setFilter] = useState('7 Dias');
+  const [showGrowthTooltip, setShowGrowthTooltip] = useState(false);
 
+  // Pivot Inteligência
+  const [intelFilter, setIntelFilter] = useState('30 Dias');
+  const [intelStats, setIntelStats] = useState([]);
+  const [intelTotals, setIntelTotals] = useState({ receita: 0, lucro: 0, bestDay: '' });
+  const [intelInsights, setIntelInsights] = useState([]);
+  const [intelLoading, setIntelLoading] = useState(false);
+  const [intelSelectedProduct, setIntelSelectedProduct] = useState(null);
+  const [showProductModal, setShowProductModal] = useState(false);
+  const [intelSearch, setIntelSearch] = useState('');
+
+  const openIntelModal = () => {
+    setShowProductModal(true);
+  };
+
+  const closeIntelModal = () => {
+    setShowProductModal(false);
+    setIntelSearch('');
+  };
+
+  const tooltipAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(tooltipAnim, {
+      toValue: showGrowthTooltip ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [showGrowthTooltip]);
+  
+  // 2. Gráfico Mensal e Top 5
+  const [timeSpan, setTimeSpan] = useState('Mês');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [chartMetric, setChartMetric] = useState('Receita');
   const [chartData, setChartData] = useState(null);
+  const [topProducts, setTopProducts] = useState([]);
   const [chartLoading, setChartLoading] = useState(false);
+  
+  // 3. Raio-X Diário
+  const [dailyDate, setDailyDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [dailyData, setDailyData] = useState([]);
+  const [dailyLoading, setDailyLoading] = useState(false);
+  const [dailyTotal, setDailyTotal] = useState({ receita: 0, lucro: 0 });
+  const [showAllDaily, setShowAllDaily] = useState(false);
 
+  // Helpers
   const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-
   const filters = ['Hoje', '7 Dias', '30 Dias', 'Ano', 'Tudo'];
+  
+  const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
+  // Cálculos do Estoque Atual
   const totalInvestido = products.reduce((acc, p) => acc + (parseFloat(p.preco_custo || 0) * (p.estoque_atual || 0)), 0);
   const valorBruto = products.reduce((acc, p) => acc + (parseFloat(p.preco_venda || 0) * (p.estoque_atual || 0)), 0);
   const lucroProjetado = valorBruto - totalInvestido;
+  const margemGeral = valorBruto > 0 ? ((lucroProjetado / valorBruto) * 100).toFixed(1) : 0;
+  const estoqueCritico = products.filter(p => p.estoque_atual <= p.estoque_minimo && p.estoque_minimo > 0);
 
+  // =================== EFEITOS (BUSCAS) ===================
+
+  // Efeito 1: Resumo Superior (Vendas Realizadas + Comparativo)
   useEffect(() => {
     const carregarVendas = async () => {
       setSalesLoading(true);
       try {
-        let query = supabase
-          .from('movimentacoes')
-          .select('quantidade, preco_venda_hist, produtos!inner(loja_id)')
-          .eq('is_venda', true)
-          .eq('produtos.loja_id', lojaAtiva.id);
+        const hoje = new Date();
+        let dataLimiteAtual = new Date();
+        let dataInicioAnterior = new Date();
+        let dataFimAnterior = new Date();
+        let precisaComparativo = filter !== 'Tudo';
 
-        if (filter !== 'Tudo') {
-          const hoje = new Date();
-          let dataLimite = new Date();
-          
-          if (filter === 'Hoje') {
-            dataLimite.setHours(0,0,0,0);
-          } else if (filter === '7 Dias') {
-            dataLimite.setDate(hoje.getDate() - 7);
-          } else if (filter === '30 Dias') {
-            dataLimite.setDate(hoje.getDate() - 30);
-          } else if (filter === 'Ano') {
-            dataLimite.setFullYear(hoje.getFullYear() - 1);
-          }
-          query = query.gte('criado_em', dataLimite.toISOString());
+        if (filter === 'Hoje') {
+          dataLimiteAtual.setHours(0,0,0,0);
+          dataInicioAnterior.setDate(hoje.getDate() - 1);
+          dataInicioAnterior.setHours(0,0,0,0);
+          dataFimAnterior.setDate(hoje.getDate() - 1);
+          dataFimAnterior.setHours(23,59,59,999);
+        } else if (filter === '7 Dias') {
+          dataLimiteAtual.setDate(hoje.getDate() - 7);
+          dataInicioAnterior.setDate(hoje.getDate() - 14);
+          dataFimAnterior.setDate(hoje.getDate() - 7);
+        } else if (filter === '30 Dias') {
+          dataLimiteAtual.setDate(hoje.getDate() - 30);
+          dataInicioAnterior.setDate(hoje.getDate() - 60);
+          dataFimAnterior.setDate(hoje.getDate() - 30);
+        } else if (filter === 'Ano') {
+          dataLimiteAtual.setFullYear(hoje.getFullYear() - 1);
+          dataInicioAnterior.setFullYear(hoje.getFullYear() - 2);
+          dataFimAnterior.setFullYear(hoje.getFullYear() - 1);
         }
 
-        const { data, error } = await query;
+        let queryAtual = supabase.from('movimentacoes').select('quantidade, preco_venda_hist, preco_custo_hist, produtos!inner(id, nome, loja_id)').eq('is_venda', true).eq('produtos.loja_id', lojaAtiva.id);
+        if (precisaComparativo) queryAtual = queryAtual.gte('criado_em', dataLimiteAtual.toISOString());
 
-        if (error) throw error;
+        const { data: dataAtual, error: errAtual } = await queryAtual;
+        if (errAtual) throw errAtual;
 
-        let total = 0;
-        let count = 0;
-        if (data) {
-          data.forEach(mov => {
-            total += (mov.quantidade * (mov.preco_venda_hist || 0));
-            count += mov.quantidade;
+        let totalAtual = 0;
+        let countAtual = 0;
+
+        if (dataAtual) {
+          dataAtual.forEach(mov => {
+            const qtd = mov.quantidade || 0;
+            const venda = mov.preco_venda_hist || 0;
+
+            totalAtual += (qtd * venda);
+            countAtual += qtd;
           });
         }
-        setSalesTotal(total);
-        setSalesCount(count);
+
+        setSalesTotal(totalAtual);
+        setSalesCount(countAtual);
+
+        // Busca o comparativo se não for 'Tudo'
+        if (precisaComparativo) {
+          const { data: dataPrev } = await supabase.from('movimentacoes').select('quantidade, preco_venda_hist, produtos!inner(loja_id)')
+            .eq('is_venda', true).eq('produtos.loja_id', lojaAtiva.id)
+            .gte('criado_em', dataInicioAnterior.toISOString())
+            .lt('criado_em', dataFimAnterior.toISOString());
+            
+          let totalPrev = 0;
+          if (dataPrev) {
+            dataPrev.forEach(mov => { totalPrev += (mov.quantidade * (mov.preco_venda_hist || 0)); });
+          }
+          setSalesTotalPrev(totalPrev);
+        } else {
+          setSalesTotalPrev(0);
+        }
 
       } catch (err) {
-        console.log("Erro ao carregar vendas:", err.message);
+        console.log("Erro carregar resumo:", err.message);
       } finally {
         setSalesLoading(false);
       }
     };
-    
-    if (lojaAtiva) {
-      carregarVendas();
-    }
+    if (lojaAtiva) carregarVendas();
   }, [lojaAtiva, filter]);
 
   useEffect(() => {
-    const carregarGrafico = async () => {
+    const carregarIntel = async () => {
+      setIntelLoading(true);
+      try {
+        const hoje = new Date();
+        let dataLimite = new Date();
+
+        if (intelFilter === '7 Dias') {
+          dataLimite.setDate(hoje.getDate() - 7);
+        } else if (intelFilter === '30 Dias') {
+          dataLimite.setDate(hoje.getDate() - 30);
+        } else if (intelFilter === 'Ano') {
+          dataLimite.setFullYear(hoje.getFullYear() - 1);
+        }
+
+        let query = supabase.from('movimentacoes').select('quantidade, preco_venda_hist, preco_custo_hist, criado_em, produtos!inner(id, nome, loja_id, estoque_atual)').eq('is_venda', true).eq('produtos.loja_id', lojaAtiva.id);
+        if (intelFilter !== 'Tudo') {
+          query = query.gte('criado_em', dataLimite.toISOString());
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        let totalR = 0;
+        let totalL = 0;
+        let diasStats = {};
+        let pStats = {};
+
+        if (data) {
+          data.forEach(mov => {
+            const qtd = mov.quantidade || 0;
+            const venda = mov.preco_venda_hist || 0;
+            const custo = mov.preco_custo_hist || 0;
+            const pid = mov.produtos.id;
+            const pnome = mov.produtos.nome;
+
+            const rec = qtd * venda;
+            const luc = qtd * (venda - custo);
+            const totalCustoItem = qtd * custo;
+
+            totalR += rec;
+            totalL += luc;
+
+            const diaDaSemana = new Date(mov.criado_em).toLocaleDateString('pt-BR', { weekday: 'long' });
+            if (!diasStats[diaDaSemana]) diasStats[diaDaSemana] = 0;
+            diasStats[diaDaSemana] += rec;
+
+            const estoqueAtual = mov.produtos.estoque_atual || 0;
+            if (!pStats[pid]) pStats[pid] = { id: pid, nome: pnome, receita: 0, lucro: 0, qtd: 0, custo: 0, estoqueAtual: estoqueAtual, custoUnitario: custo };
+            pStats[pid].receita += rec;
+            pStats[pid].lucro += luc;
+            pStats[pid].qtd += qtd;
+            pStats[pid].custo += totalCustoItem;
+          });
+        }
+
+        let bestDayName = '-';
+        if (Object.keys(diasStats).length > 0) {
+           bestDayName = Object.keys(diasStats).reduce((a, b) => diasStats[a] > diasStats[b] ? a : b);
+           bestDayName = bestDayName.charAt(0).toUpperCase() + bestDayName.slice(1);
+        }
+
+        setIntelTotals({ receita: totalR, lucro: totalL, bestDay: bestDayName });
+
+        let arrStats = Object.values(pStats).map(p => {
+          p.margem = p.receita > 0 ? ((p.lucro / p.receita) * 100) : 0;
+          p.investimento = (p.qtd + p.estoqueAtual) * p.custoUnitario;
+          p.rentabilidade = p.investimento > 0 ? ((p.lucro / p.investimento) * 100) : 0;
+          return p;
+        });
+
+        const newInsights = [];
+        if (arrStats.length > 0) {
+          const boasMargens = arrStats.filter(p => p.margem >= 30);
+          if (boasMargens.length > 0) {
+            const estrela = boasMargens.sort((a,b) => b.qtd - a.qtd)[0];
+            newInsights.push({ id: 'estrela', tipo: 'Estrela', titulo: '🌟 A Estrela da Loja', produto: estrela.nome, descricao: `Rentabilidade de ${estrela.margem.toFixed(0)}% e alta saída.`, cor: '#38a169', bg: '#f0fff4' });
+          }
+          const baixasMargens = arrStats.filter(p => p.margem < 15);
+          if (baixasMargens.length > 0) {
+            const falso = baixasMargens.sort((a,b) => b.qtd - a.qtd)[0];
+            newInsights.push({ id: 'falso', tipo: 'Alerta', titulo: '⚠️ O Falso Campeão', produto: falso.nome, descricao: `Vende muito, mas margem de apenas ${falso.margem.toFixed(0)}%.`, cor: '#e53e3e', bg: '#fff5f5' });
+          }
+          const avgQtd = arrStats.reduce((acc, p) => acc + p.qtd, 0) / (arrStats.length || 1);
+          const poucoGiro = arrStats.filter(p => p.qtd < avgQtd && p.margem > 40);
+          if (poucoGiro.length > 0) {
+            const ouro = poucoGiro.sort((a,b) => b.margem - a.margem)[0];
+            newInsights.push({ id: 'ouro', tipo: 'Ouro', titulo: '🐢 Ouro Escondido', produto: ouro.nome, descricao: `Margem de ${ouro.margem.toFixed(0)}%, mas girou pouco.`, cor: '#d69e2e', bg: '#fffff0' });
+          }
+        }
+        setIntelInsights(newInsights);
+        setIntelStats(arrStats);
+      } catch (err) {
+        console.log("Erro Intel:", err.message);
+      } finally {
+        setIntelLoading(false);
+      }
+    };
+    if (lojaAtiva) carregarIntel();
+  }, [lojaAtiva, intelFilter]);
+
+  // Efeito 2: Gráfico Mensal e Top 5 Produtos
+  useEffect(() => {
+    const carregarGraficoERanking = async () => {
       setChartLoading(true);
       try {
-        const dateStart = new Date(selectedYear, selectedMonth, 1);
-        const dateEnd = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
+        let dateStart, dateEnd, dataPoints;
+        const q = Math.floor(selectedMonth / 3) + 1;
+        const s = Math.floor(selectedMonth / 6) + 1;
+
+        if (timeSpan === 'Mês') {
+          dateStart = new Date(selectedYear, selectedMonth, 1);
+          dateEnd = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
+          dataPoints = dateEnd.getDate();
+        } else if (timeSpan === 'Trimestre') {
+          dateStart = new Date(selectedYear, (q - 1) * 3, 1);
+          dateEnd = new Date(selectedYear, q * 3, 0, 23, 59, 59);
+          dataPoints = 3;
+        } else if (timeSpan === 'Semestre') {
+          dateStart = new Date(selectedYear, (s - 1) * 6, 1);
+          dateEnd = new Date(selectedYear, s * 6, 0, 23, 59, 59);
+          dataPoints = 6;
+        } else {
+          dateStart = new Date(selectedYear, 0, 1);
+          dateEnd = new Date(selectedYear, 12, 0, 23, 59, 59);
+          dataPoints = 12;
+        }
 
         const { data, error } = await supabase
           .from('movimentacoes')
-          .select('quantidade, preco_venda_hist, preco_custo_hist, criado_em, produtos!inner(loja_id)')
+          .select('produto_id, quantidade, preco_venda_hist, preco_custo_hist, criado_em, produtos!inner(id, nome, loja_id)')
           .eq('is_venda', true)
           .eq('produtos.loja_id', lojaAtiva.id)
           .gte('criado_em', dateStart.toISOString())
@@ -4593,66 +4791,183 @@ const DashboardScreen = ({ navigation }) => {
 
         if (error) throw error;
 
-        const daysInMonth = dateEnd.getDate();
-        const aggregated = Array(daysInMonth).fill(0);
+        const aggregated = Array(dataPoints).fill(0);
+        const aggregatedReceita = Array(dataPoints).fill(0);
+        const aggregatedLucro = Array(dataPoints).fill(0);
+        const productStats = {};
 
         if (data) {
           data.forEach(mov => {
             const date = new Date(mov.criado_em);
-            const dayIndex = date.getDate() - 1;
+            let idx = 0;
+            if (timeSpan === 'Mês') {
+              idx = date.getDate() - 1;
+            } else if (timeSpan === 'Trimestre') {
+              idx = date.getMonth() - ((q - 1) * 3);
+            } else if (timeSpan === 'Semestre') {
+              idx = date.getMonth() - ((s - 1) * 6);
+            } else {
+              idx = date.getMonth();
+            }
 
             const qtd = mov.quantidade || 0;
             const venda = mov.preco_venda_hist || 0;
             const custo = mov.preco_custo_hist || 0;
+            const pId = mov.produtos.id;
+            const pNome = mov.produtos.nome;
 
-            if (chartMetric === 'Receita') {
-              aggregated[dayIndex] += (qtd * venda);
-            } else if (chartMetric === 'Lucro') {
-              aggregated[dayIndex] += (qtd * (venda - custo));
-            } else if (chartMetric === 'Itens') {
-              aggregated[dayIndex] += qtd;
+            if (chartMetric === 'Receita') aggregated[idx] += (qtd * venda);
+            else if (chartMetric === 'Lucro') aggregated[idx] += (qtd * (venda - custo));
+            else if (chartMetric === 'Itens') aggregated[idx] += qtd;
+            else if (chartMetric === 'Margem') {
+              aggregatedReceita[idx] += (qtd * venda);
+              aggregatedLucro[idx] += (qtd * (venda - custo));
             }
+
+            if (!productStats[pId]) productStats[pId] = { id: pId, nome: pNome, receita: 0, lucro: 0, qtd: 0 };
+            productStats[pId].receita += (qtd * venda);
+            productStats[pId].lucro += (qtd * (venda - custo));
+            productStats[pId].qtd += qtd;
           });
+
+          if (chartMetric === 'Margem') {
+            for (let i = 0; i < dataPoints; i++) {
+              if (aggregatedReceita[i] > 0) {
+                aggregated[i] = (aggregatedLucro[i] / aggregatedReceita[i]) * 100;
+              }
+            }
+          }
         }
 
-        const labels = Array(daysInMonth).fill(0).map((_, i) => {
-          const day = i + 1;
-          if (day === 1 || day === daysInMonth || day % 5 === 0) return day.toString();
-          return '';
-        });
+        const monthsShort = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+        let labels = [];
+        if (timeSpan === 'Mês') {
+          labels = Array(dataPoints).fill(0).map((_, i) => {
+            const day = i + 1;
+            if (day === 1 || day === dataPoints || day % 5 === 0) return day.toString();
+            return '';
+          });
+        } else if (timeSpan === 'Trimestre') {
+          const startM = (q - 1) * 3;
+          labels = [monthsShort[startM], monthsShort[startM+1], monthsShort[startM+2]];
+        } else if (timeSpan === 'Semestre') {
+          const startM = (s - 1) * 6;
+          labels = Array(6).fill(0).map((_, i) => monthsShort[startM + i]);
+        } else {
+          labels = monthsShort;
+        }
 
-        // Só exibe se houver algum valor maior que 0
         if (aggregated.some(val => val > 0)) {
           setChartData({
             labels,
-            datasets: [
-              {
-                data: aggregated,
-                color: (opacity = 1) => chartMetric === 'Lucro' ? `rgba(40, 167, 69, ${opacity})` : (chartMetric === 'Itens' ? `rgba(255, 152, 0, ${opacity})` : `rgba(0, 122, 255, ${opacity})`),
-                strokeWidth: 3
-              }
-            ]
+            datasets: [{
+              data: aggregated,
+              color: (o = 1) => {
+                if (chartMetric === 'Lucro') return `rgba(40,167,69,${o})`;
+                if (chartMetric === 'Itens') return `rgba(255,152,0,${o})`;
+                if (chartMetric === 'Margem') return `rgba(142,68,173,${o})`;
+                return `rgba(0,122,255,${o})`;
+              },
+              strokeWidth: 3
+            }]
           });
         } else {
           setChartData(null);
         }
 
+        // Ordenando Ranking dinamicamente
+        let sortField = 'receita';
+        if (chartMetric === 'Lucro') sortField = 'lucro';
+        if (chartMetric === 'Itens') sortField = 'qtd';
+        if (chartMetric === 'Margem') sortField = 'margem';
+
+        const rankingArray = Object.values(productStats).map(p => {
+          p.margem = p.receita > 0 ? parseFloat(((p.lucro / p.receita) * 100).toFixed(1)) : 0;
+          return p;
+        }).sort((a, b) => b[sortField] - a[sortField]).slice(0, 5);
+        setTopProducts(rankingArray);
+
       } catch (err) {
-        console.log("Erro ao carregar gráfico:", err.message);
+        console.log("Erro gráfico:", err.message);
       } finally {
         setChartLoading(false);
       }
     };
+    if (lojaAtiva) carregarGraficoERanking();
+  }, [lojaAtiva, selectedMonth, selectedYear, chartMetric, timeSpan]);
 
-    if (lojaAtiva) carregarGrafico();
-  }, [lojaAtiva, selectedMonth, selectedYear, chartMetric]);
+  // Efeito 3: Raio-X Diário
+  useEffect(() => {
+    const carregarRaioX = async () => {
+      setDailyLoading(true);
+      try {
+        const start = new Date(dailyDate); start.setHours(0,0,0,0);
+        const end = new Date(dailyDate); end.setHours(23,59,59,999);
 
-  const formatCurrency = (val) => {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+        const { data, error } = await supabase
+          .from('movimentacoes')
+          .select('id, quantidade, preco_venda_hist, preco_custo_hist, criado_em, produtos!inner(nome, loja_id)')
+          .eq('is_venda', true)
+          .eq('produtos.loja_id', lojaAtiva.id)
+          .gte('criado_em', start.toISOString())
+          .lte('criado_em', end.toISOString())
+          .order('criado_em', { ascending: false });
+
+        if (error) throw error;
+
+        let dReceita = 0;
+        let dLucro = 0;
+        if (data) {
+          data.forEach(mov => {
+            const r = mov.quantidade * (mov.preco_venda_hist || 0);
+            const l = mov.quantidade * ((mov.preco_venda_hist || 0) - (mov.preco_custo_hist || 0));
+            dReceita += r;
+            dLucro += l;
+          });
+        }
+        setDailyData(data || []);
+        setDailyTotal({ receita: dReceita, lucro: dLucro });
+      } catch (err) {
+        console.log("Erro Raio-X:", err.message);
+      } finally {
+        setDailyLoading(false);
+      }
+    };
+    if (lojaAtiva) carregarRaioX();
+  }, [lojaAtiva, dailyDate]);
+
+  // continuação de dashboard_v2.js
+
+  const renderDailyItem = (mov) => {
+    const dataHora = new Date(mov.criado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const nome = mov.produtos?.nome || 'Desconhecido';
+    const totalVenda = mov.quantidade * (mov.preco_venda_hist || 0);
+    const lucroVenda = mov.quantidade * ((mov.preco_venda_hist || 0) - (mov.preco_custo_hist || 0));
+    return (
+      <View key={mov.id} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderColor: '#f0f4f8' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontWeight: '600', color: '#2d3748' }}>{nome}</Text>
+          <Text style={{ fontSize: 12, color: '#a0aec0' }}>{dataHora} • {mov.quantidade} unidade(s)</Text>
+        </View>
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{formatCurrency(totalVenda)}</Text>
+          <Text style={{ fontSize: 11, color: '#38a169', fontWeight: '600' }}>Lucro: {formatCurrency(lucroVenda)}</Text>
+        </View>
+      </View>
+    );
   };
 
+  const crescimento = salesTotalPrev > 0 ? (((salesTotal - salesTotalPrev) / salesTotalPrev) * 100).toFixed(1) : 0;
+  const ticketMedio = salesCount > 0 ? salesTotal / salesCount : 0;
+
   return (
-    <View style={{ flex: 1, backgroundColor: '#f0f4f8' }}>
+    <View 
+      style={{ flex: 1, backgroundColor: '#f0f4f8' }}
+      onStartShouldSetResponder={() => {
+        if (showGrowthTooltip) setShowGrowthTooltip(false);
+        return false;
+      }}
+    >
       <View style={{ paddingTop: Platform.OS === 'android' ? 40 : 50, paddingBottom: 15, paddingHorizontal: 20, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#e0e5ea' }}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginRight: 15 }}>
           <Ionicons name="arrow-back" size={28} color="#333" />
@@ -4660,9 +4975,15 @@ const DashboardScreen = ({ navigation }) => {
         <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#1a202c' }}>Dashboard Financeiro</Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
+      <ScrollView 
+        contentContainerStyle={{ padding: 20 }}
+        onScrollBeginDrag={() => { if (showGrowthTooltip) setShowGrowthTooltip(false) }}
+        scrollEventThrottle={16}
+      >
         
-        {/* Vendas Card */}
+        {/* ========================================================
+            1. RESUMO SUPERIOR (VENDAS, TICKET MÉDIO E CRESCIMENTO)
+            ======================================================== */}
         <LinearGradient
           colors={['#007AFF', '#0056b3']}
           start={{ x: 0, y: 0 }}
@@ -4678,7 +4999,7 @@ const DashboardScreen = ({ navigation }) => {
             {filters.map(f => (
               <TouchableOpacity
                 key={f}
-                onPress={() => setFilter(f)}
+                onPress={() => { setFilter(f); setShowGrowthTooltip(false); }}
                 style={{
                   backgroundColor: filter === f ? '#fff' : 'rgba(255,255,255,0.2)',
                   paddingHorizontal: 15,
@@ -4692,85 +5013,163 @@ const DashboardScreen = ({ navigation }) => {
             ))}
           </ScrollView>
 
-          <View style={{ height: 75, justifyContent: 'center' }}>
+          <View style={{ minHeight: 110, justifyContent: 'center' }}>
             {salesLoading ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <View>
                 <Text style={{ color: '#fff', fontSize: 36, fontWeight: 'bold' }}>{formatCurrency(salesTotal)}</Text>
-                <Text style={{ color: '#b3d9ff', fontSize: 14, marginTop: 4 }}>{salesCount} item(s) vendidos</Text>
+                
+                {/* Métricas Extras */}
+                <View style={{ zIndex: 10 }}>
+                  <View style={{ flexDirection: 'row', marginTop: 8, alignItems: 'center' }}>
+                    <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginRight: 10 }}>
+                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
+                        Ticket Médio: {formatCurrency(ticketMedio)}
+                      </Text>
+                    </View>
+                    
+                    {filter !== 'Tudo' && salesTotalPrev > 0 && (
+                      <View style={{ position: 'relative', zIndex: 20 }}>
+                        <TouchableOpacity onPress={() => setShowGrowthTooltip(!showGrowthTooltip)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: crescimento >= 0 ? 'rgba(76, 175, 80, 0.8)' : 'rgba(244, 67, 54, 0.8)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                          <Ionicons name={crescimento >= 0 ? "trending-up" : "trending-down"} size={14} color="#fff" style={{ marginRight: 4 }} />
+                          <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
+                            {crescimento >= 0 ? '+' : ''}{crescimento}%
+                          </Text>
+                        </TouchableOpacity>
+
+                        <Animated.View style={{ opacity: tooltipAnim, transform: [{ translateY: tooltipAnim.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: showGrowthTooltip ? 'auto' : 'none', position: 'absolute', top: 35, left: '50%', marginLeft: -100, width: 200, backgroundColor: '#1a202c', padding: 12, borderRadius: 8, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.3, shadowRadius: 5, elevation: 8 }}>
+                          {/* Seta para cima (triângulo) */}
+                          <View style={{ position: 'absolute', top: -6, left: 94, width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 6, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#1a202c' }} />
+                          <Text style={{ color: '#e2e8f0', fontSize: 12, lineHeight: 18, textAlign: 'center' }}>
+                            <Text style={{ fontWeight: 'bold', color: crescimento >= 0 ? '#48bb78' : '#f56565' }}>{crescimento >= 0 ? 'Aumento' : 'Queda'} nas vendas</Text> em relação {filter === 'Hoje' ? 'a ontem.' : filter === '7 Dias' ? 'à semana passada.' : filter === '30 Dias' ? 'ao mês passado.' : 'ao ano passado.'}
+                          </Text>
+                        </Animated.View>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                <Text style={{ color: '#b3d9ff', fontSize: 13, marginTop: 10 }}>{salesCount} unidade(s) vendidas no período</Text>
               </View>
             )}
           </View>
         </LinearGradient>
 
-        {/* Gráfico Histórico */}
+        
+
+        {/* O carrossel de insights foi movido para a aba de Inteligência & Desempenho */}
+
+        {/* ========================================================
+            2. GRÁFICO HISTÓRICO E RANKING
+            ======================================================== */}
         <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-            <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1a202c' }}>Evolução Mensal</Text>
+            <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1a202c' }}>
+              Evolução {timeSpan === 'Mês' ? 'Mensal' : timeSpan === 'Trimestre' ? 'Trimestral' : timeSpan === 'Semestre' ? 'Semestral' : 'Anual'}
+            </Text>
             
             {/* Seletor de Mês/Ano */}
             <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f4f8', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
               <TouchableOpacity onPress={() => {
-                if (selectedMonth === 0) { setSelectedMonth(11); setSelectedYear(y => y - 1); }
-                else { setSelectedMonth(m => m - 1); }
+                const step = timeSpan === 'Trimestre' ? 3 : timeSpan === 'Semestre' ? 6 : timeSpan === 'Ano' ? 12 : 1;
+                let newMonth = selectedMonth - step;
+                let newYear = selectedYear;
+                if (newMonth < 0) {
+                  newYear -= Math.ceil(Math.abs(newMonth) / 12) || 1;
+                  newMonth = 12 + (newMonth % 12);
+                  if (newMonth === 12) newMonth = 0;
+                }
+                setSelectedMonth(newMonth);
+                setSelectedYear(newYear);
               }}>
                 <Ionicons name="chevron-back" size={20} color="#007AFF" />
               </TouchableOpacity>
               <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#007AFF', marginHorizontal: 8, minWidth: 65, textAlign: 'center' }}>
-                {months[selectedMonth]} {selectedYear}
+                {timeSpan === 'Mês' ? `${months[selectedMonth]} ${selectedYear}` :
+                 timeSpan === 'Trimestre' ? `${Math.floor(selectedMonth/3)+1}º Tri de ${selectedYear}` :
+                 timeSpan === 'Semestre' ? `${Math.floor(selectedMonth/6)+1}º Sem de ${selectedYear}` :
+                 `Ano de ${selectedYear}`}
               </Text>
               <TouchableOpacity onPress={() => {
-                if (selectedMonth === 11) { setSelectedMonth(0); setSelectedYear(y => y + 1); }
-                else { setSelectedMonth(m => m + 1); }
+                const step = timeSpan === 'Trimestre' ? 3 : timeSpan === 'Semestre' ? 6 : timeSpan === 'Ano' ? 12 : 1;
+                let newMonth = selectedMonth + step;
+                let newYear = selectedYear;
+                if (newMonth > 11) {
+                  newYear += Math.floor(newMonth / 12);
+                  newMonth = newMonth % 12;
+                }
+                setSelectedMonth(newMonth);
+                setSelectedYear(newYear);
               }}>
                 <Ionicons name="chevron-forward" size={20} color="#007AFF" />
               </TouchableOpacity>
             </View>
           </View>
 
+          {/* Seletor de Período (timeSpan) */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15, marginHorizontal: -5 }}>
+            {['Mês', 'Trimestre', 'Semestre', 'Ano'].map(ts => (
+              <TouchableOpacity
+                key={ts}
+                onPress={() => {
+                  setTimeSpan(ts);
+                  setSelectedMonth(new Date().getMonth());
+                  setSelectedYear(new Date().getFullYear());
+                }}
+                style={{
+                  backgroundColor: timeSpan === ts ? '#333' : '#f0f4f8',
+                  paddingHorizontal: 15,
+                  paddingVertical: 6,
+                  borderRadius: 20,
+                  marginHorizontal: 5
+                }}
+              >
+                <Text style={{ color: timeSpan === ts ? '#fff' : '#666', fontWeight: 'bold', fontSize: 12 }}>{ts}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
           {/* Filtros de Métrica */}
-          <View style={{ flexDirection: 'row', marginBottom: 20 }}>
-            {['Receita', 'Lucro', 'Itens'].map(metric => (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
+            {['Receita', 'Lucro', 'Margem', 'Itens'].map(metric => (
               <TouchableOpacity
                 key={metric}
                 onPress={() => setChartMetric(metric)}
                 style={{
-                  backgroundColor: chartMetric === metric ? (metric === 'Lucro' ? '#28a745' : metric === 'Itens' ? '#ff9800' : '#007AFF') : '#f0f4f8',
+                  backgroundColor: chartMetric === metric ? (metric === 'Lucro' ? '#28a745' : metric === 'Itens' ? '#ff9800' : metric === 'Margem' ? '#8e44ad' : '#007AFF') : '#f0f4f8',
                   paddingHorizontal: 15,
                   paddingVertical: 6,
                   borderRadius: 20,
                   marginRight: 10
                 }}
               >
-                <Text style={{ color: chartMetric === metric ? '#fff' : '#666', fontWeight: 'bold', fontSize: 12 }}>
-                  {metric}
-                </Text>
+                <Text style={{ color: chartMetric === metric ? '#fff' : '#666', fontWeight: 'bold', fontSize: 12 }}>{metric}</Text>
               </TouchableOpacity>
             ))}
-          </View>
+          </ScrollView>
 
           {/* Área do Gráfico */}
-          <View style={{ alignItems: 'center', minHeight: 220, justifyContent: 'center' }}>
+          <View style={{ alignItems: 'center', minHeight: 236, justifyContent: 'center' }}>
             {chartLoading ? (
               <ActivityIndicator size="large" color="#007AFF" />
             ) : chartData ? (
               <LineChart
                 data={chartData}
-                width={Dimensions.get("window").width - 80} // Width of card minus padding
+                width={Dimensions.get("window").width - 80}
                 height={220}
                 withDots={false}
                 withInnerLines={false}
                 withOuterLines={false}
-                yAxisLabel={chartMetric === 'Itens' ? '' : 'R$ '}
-                yAxisSuffix={chartMetric === 'Itens' ? ' un' : ''}
+                yAxisLabel={chartMetric === 'Itens' || chartMetric === 'Margem' ? '' : 'R$ '}
+                yAxisSuffix={chartMetric === 'Itens' ? ' un' : chartMetric === 'Margem' ? '%' : ''}
                 chartConfig={{
                   backgroundColor: "#fff",
                   backgroundGradientFrom: "#fff",
                   backgroundGradientTo: "#fff",
-                  decimalPlaces: chartMetric === 'Itens' ? 0 : 0, // Formatação sem decimais para ficar limpo
-                  color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-                  labelColor: (opacity = 1) => `rgba(100, 100, 100, ${opacity})`,
+                  decimalPlaces: chartMetric === 'Itens' ? 0 : 0,
+                  color: (o = 1) => `rgba(0,0,0,${o})`,
+                  labelColor: (o = 1) => `rgba(100,100,100,${o})`,
                   style: { borderRadius: 16 },
                   propsForDots: { r: "0" }
                 }}
@@ -4778,16 +5177,258 @@ const DashboardScreen = ({ navigation }) => {
                 style={{ marginVertical: 8, borderRadius: 16 }}
               />
             ) : (
-              <View style={{ alignItems: 'center' }}>
+              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
                 <Ionicons name="bar-chart-outline" size={48} color="#ccc" />
-                <Text style={{ color: '#999', marginTop: 10 }}>Nenhuma venda neste mês.</Text>
+                <Text style={{ color: '#999', marginTop: 10 }}>Nenhuma venda neste período.</Text>
               </View>
             )}
           </View>
+
+          {/* Ranking Top 5 */}
+          {topProducts.length > 0 && (
+            <View style={{ marginTop: 20, borderTopWidth: 1, borderColor: '#eee', paddingTop: 15, opacity: chartLoading ? 0.5 : 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                <Ionicons name="trophy-outline" size={16} color="#4a5568" style={{ marginRight: 5 }} />
+                <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#4a5568' }}>
+                  {chartMetric === 'Lucro' ? `Maiores Lucros do ${timeSpan}` : chartMetric === 'Itens' ? `Maiores Saídas do ${timeSpan}` : chartMetric === 'Margem' ? `Maiores Margens do ${timeSpan}` : `Maiores Receitas do ${timeSpan}`}
+                </Text>
+              </View>
+              {topProducts.map((p, index) => (
+                <View key={p.id} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={{ color: '#2d3748', fontSize: 14, flex: 1 }} numberOfLines={1}>
+                    <Text style={{ fontWeight: 'bold', color: chartMetric === 'Lucro' ? '#28a745' : chartMetric === 'Itens' ? '#ff9800' : chartMetric === 'Margem' ? '#8e44ad' : '#007AFF' }}>{index + 1}º</Text> {p.nome}
+                  </Text>
+                  <Text style={{ color: '#718096', fontSize: 13, fontWeight: '600' }}>
+                    {chartMetric === 'Lucro' 
+                      ? `${formatCurrency(p.lucro)} (${p.margem}%) ` 
+                      : chartMetric === 'Receita' 
+                        ? formatCurrency(p.receita) 
+                        : chartMetric === 'Margem'
+                          ? `${p.margem}% `
+                          : null}
+                    <Text style={{ color: '#a0aec0', fontSize: 11 }}>
+                      {chartMetric === 'Itens' ? `${p.qtd} un` : chartMetric === 'Margem' ? `(${formatCurrency(p.lucro)} lucro)` : `(${p.qtd} un)`}
+                    </Text>
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
 
-        {/* Resumo do Estoque Atual */}
+        {/* ========================================================
+            NOVA: INTELIGÊNCIA DE NEGÓCIO & DESEMPENHO (LUPA)
+            ======================================================== */}
+        <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="bulb" size={24} color="#d69e2e" style={{ marginRight: 8 }} />
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Inteligência & Desempenho</Text>
+            </View>
+          </View>
+
+          {/* Filtros da Seção */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15, marginHorizontal: -20, paddingHorizontal: 20 }}>
+            {['7 Dias', '30 Dias', 'Ano', 'Tudo'].map((f) => (
+              <TouchableOpacity key={f} onPress={() => setIntelFilter(f)} style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, backgroundColor: intelFilter === f ? '#d69e2e' : '#f0f4f8', marginRight: 10 }}>
+                <Text style={{ color: intelFilter === f ? '#fff' : '#4a5568', fontWeight: 'bold', fontSize: 13 }}>{f}</Text>
+              </TouchableOpacity>
+            ))}
+            <View style={{ width: 40 }} />
+          </ScrollView>
+
+          {intelLoading ? (
+            <ActivityIndicator color="#d69e2e" style={{ marginVertical: 30 }} />
+          ) : (
+            <>
+              {/* Insights */}
+              {intelInsights.length > 0 && (
+                <View style={{ marginBottom: 20 }}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20, paddingHorizontal: 20 }}>
+                    {intelInsights.map(ins => (
+                      <View key={ins.id} style={{ backgroundColor: ins.bg, borderRadius: 12, padding: 15, width: 260, marginRight: 15, borderWidth: 1, borderColor: ins.cor + '40' }}>
+                        <Text style={{ fontSize: 14, fontWeight: 'bold', color: ins.cor, marginBottom: 5 }}>{ins.titulo}</Text>
+                        <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#2d3748', marginBottom: 5 }} numberOfLines={1}>{ins.produto}</Text>
+                        <Text style={{ fontSize: 12, color: '#4a5568' }}>{ins.descricao}</Text>
+                      </View>
+                    ))}
+                    <View style={{ width: 40 }} />
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* Estatísticas Gerais */}
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Visão Geral da Loja ({intelFilter})</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 20 }}>
+                <View style={{ width: '48%', backgroundColor: '#f8fafc', padding: 12, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                  <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>CMV Total</Text>
+                  <Text style={{ fontSize: 14, color: '#2d3748', fontWeight: 'bold', marginTop: 4 }}>{formatCurrency(intelTotals.receita - intelTotals.lucro)}</Text>
+                </View>
+                <View style={{ width: '48%', backgroundColor: '#f8fafc', padding: 12, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                  <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>Margem Média</Text>
+                  <Text style={{ fontSize: 14, color: intelTotals.receita > 0 && (intelTotals.lucro/intelTotals.receita)*100 >= 20 ? '#38a169' : '#e53e3e', fontWeight: 'bold', marginTop: 4 }}>
+                    {intelTotals.receita > 0 ? ((intelTotals.lucro / intelTotals.receita) * 100).toFixed(1) : '0'}%
+                  </Text>
+                </View>
+                <View style={{ width: '100%', backgroundColor: '#f8fafc', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                  <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>Melhor Dia de Venda</Text>
+                  <Text style={{ fontSize: 14, color: '#d69e2e', fontWeight: 'bold', marginTop: 4 }}>{intelTotals.bestDay || 'Nenhum'}</Text>
+                </View>
+              </View>
+
+              {/* Lupa do Produto */}
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Análise por Produto ({intelFilter})</Text>
+              <TouchableOpacity onPress={openIntelModal} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f0f4f8', padding: 15, borderRadius: 12, marginBottom: 15 }}>
+                <Text numberOfLines={1} style={{ flex: 1, marginRight: 10, color: intelSelectedProduct ? '#1a202c' : '#718096', fontWeight: 'bold', fontSize: 14 }}>
+                  {intelSelectedProduct && products.find(p => p.id === intelSelectedProduct) ? products.find(p => p.id === intelSelectedProduct).nome : 'Selecione um produto para investigar'}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color="#718096" />
+              </TouchableOpacity>
+
+              {intelSelectedProduct && (
+                <View style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', padding: 15 }}>
+                  {intelStats.find(s => s.id === intelSelectedProduct) ? (
+                    (() => {
+                      const selStat = intelStats.find(s => s.id === intelSelectedProduct);
+                      const percReceita = intelTotals.receita > 0 ? ((selStat.receita / intelTotals.receita) * 100).toFixed(1) : 0;
+                      return (
+                        <>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                            <View>
+                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>UNIDADES VENDIDAS</Text>
+                              <Text style={{ fontSize: 16, color: '#2d3748', fontWeight: 'bold' }}>{selStat.qtd} un</Text>
+                            </View>
+                            <View style={{ alignItems: 'flex-end' }}>
+                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>MARGEM DE LUCRO</Text>
+                              <Text style={{ fontSize: 16, color: selStat.margem >= 20 ? '#38a169' : '#e53e3e', fontWeight: 'bold' }}>{selStat.margem.toFixed(1)}%</Text>
+                            </View>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                            <View>
+                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RECEITA GERADA</Text>
+                              <Text style={{ fontSize: 15, color: '#2d3748', fontWeight: 'bold' }}>{formatCurrency(selStat.receita)}</Text>
+                            </View>
+                            <View style={{ alignItems: 'flex-end' }}>
+                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>LUCRO LÍQUIDO</Text>
+                              <Text style={{ fontSize: 15, color: '#38a169', fontWeight: 'bold' }}>{formatCurrency(selStat.lucro)}</Text>
+                            </View>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderColor: '#edf2f7' }}>
+                            <View>
+                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>CAPITAL INVESTIDO</Text>
+                              <Text style={{ fontSize: 15, color: '#4a5568', fontWeight: 'bold' }}>{formatCurrency(selStat.investimento || 0)}</Text>
+                            </View>
+                            <View style={{ alignItems: 'flex-end' }}>
+                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RENTABILIDADE (ROI)</Text>
+                              <Text style={{ fontSize: 15, color: '#d69e2e', fontWeight: 'bold' }}>{(selStat.rentabilidade || 0).toFixed(1)}%</Text>
+                            </View>
+                          </View>
+                          <View style={{ backgroundColor: '#f8fafc', padding: 10, borderRadius: 8, marginTop: 5 }}>
+                            <Text style={{ fontSize: 12, color: '#4a5568', textAlign: 'center' }}>
+                              Representou <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{percReceita}%</Text> da receita e <Text style={{ fontWeight: 'bold', color: '#38a169' }}>{intelTotals.lucro > 0 ? ((selStat.lucro / intelTotals.lucro) * 100).toFixed(1) : 0}%</Text> de todo o lucro.
+                            </Text>
+                          </View>
+                        </>
+                      );
+                    })()
+                  ) : (
+                    <Text style={{ textAlign: 'center', color: '#a0aec0', fontSize: 13, paddingVertical: 10 }}>Este produto não teve saídas no período selecionado.</Text>
+                  )}
+                </View>
+              )}
+            </>
+          )}
+        </View>
+
+        {/* ========================================================
+            3. RAIO-X DIÁRIO (VISÃO DETALHADA)
+            ======================================================== */}
+        <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="search-outline" size={20} color="#007AFF" style={{ marginRight: 8 }} />
+              <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1a202c' }}>Raio-X Diário</Text>
+            </View>
+            
+            <TouchableOpacity 
+              onPress={() => setShowDatePicker(true)}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f4f8', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+            >
+              <Text style={{ color: '#007AFF', fontWeight: 'bold', marginRight: 5 }}>
+                {dailyDate.toLocaleDateString('pt-BR')}
+              </Text>
+              <Ionicons name="calendar-outline" size={16} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
+
+          {showDatePicker && (
+            <DateTimePicker
+              value={dailyDate}
+              mode="date"
+              display="default"
+              onChange={(event, selectedDate) => {
+                setShowDatePicker(Platform.OS === 'ios');
+                if (selectedDate) setDailyDate(selectedDate);
+              }}
+            />
+          )}
+
+          {dailyLoading ? (
+            <ActivityIndicator color="#007AFF" style={{ marginVertical: 30 }} />
+          ) : dailyData.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+              <Ionicons name="receipt-outline" size={40} color="#ccc" />
+              <Text style={{ color: '#999', marginTop: 10 }}>Nenhuma venda registrada neste dia.</Text>
+            </View>
+          ) : (
+            <>
+              {/* Resumo do Dia */}
+              <View style={{ flexDirection: 'row', backgroundColor: '#f8fafc', borderRadius: 8, padding: 12, marginBottom: 15 }}>
+                <View style={{ flex: 1, borderRightWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RECEITA DO DIA</Text>
+                  <Text style={{ fontSize: 16, color: '#2d3748', fontWeight: 'bold', marginTop: 4 }}>{formatCurrency(dailyTotal.receita)}</Text>
+                </View>
+                <View style={{ flex: 1, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>LUCRO DO DIA</Text>
+                  <Text style={{ fontSize: 16, color: '#38a169', fontWeight: 'bold', marginTop: 4 }}>{formatCurrency(dailyTotal.lucro)}</Text>
+                </View>
+              </View>
+
+              {/* Lista de Saídas */}
+              <View>
+                <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Extrato de Saídas</Text>
+                {(showAllDaily ? dailyData : dailyData.slice(0, 10)).map(renderDailyItem)}
+                
+                {dailyData.length > 10 && (
+                  <TouchableOpacity onPress={() => setShowAllDaily(!showAllDaily)} style={{ marginTop: 15, alignItems: 'center', paddingVertical: 12, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                    <Text style={{ color: '#007AFF', fontWeight: 'bold', fontSize: 14 }}>
+                      {showAllDaily ? 'Ocultar extrato completo' : `Ver mais ${dailyData.length - 10} vendas...`}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
+          )}
+        </View>
+
+        {/* ========================================================
+            4. RETRATO DO ESTOQUE ATUAL & ALERTAS
+            ======================================================== */}
         <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#2d3748', marginBottom: 15, marginTop: 10 }}>Retrato do Estoque Atual</Text>
+
+        {estoqueCritico.length > 0 && (
+          <TouchableOpacity 
+            onPress={() => navigation.navigate('Estoque')}
+            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff5f5', borderColor: '#feb2b2', borderWidth: 1, borderRadius: 12, padding: 15, marginBottom: 15 }}
+          >
+            <Ionicons name="warning" size={24} color="#e53e3e" style={{ marginRight: 10 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#c53030', fontWeight: 'bold', fontSize: 14 }}>Atenção Necessária</Text>
+              <Text style={{ color: '#e53e3e', fontSize: 13 }}>Você tem {estoqueCritico.length} produto(s) no estoque crítico.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#e53e3e" />
+          </TouchableOpacity>
+        )}
 
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 }}>
           <View style={{ flex: 1, backgroundColor: '#fff', padding: 15, borderRadius: 16, marginRight: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
@@ -4813,15 +5454,68 @@ const DashboardScreen = ({ navigation }) => {
             <View>
               <Text style={{ color: '#e8f5e9', fontSize: 14, fontWeight: '600' }}>Lucro Projetado (Físico)</Text>
               <Text style={{ color: '#fff', fontSize: 28, fontWeight: 'bold', marginTop: 5 }}>{formatCurrency(lucroProjetado)}</Text>
+              <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginTop: 8 }}>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>Margem Geral: {margemGeral}%</Text>
+              </View>
             </View>
             <Ionicons name="trending-up" size={40} color="rgba(255,255,255,0.8)" />
           </View>
         </LinearGradient>
 
       </ScrollView>
+
+      <Modal visible={showProductModal} animationType="fade" transparent={true}>
+        <TouchableWithoutFeedback onPress={closeIntelModal}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+            <TouchableWithoutFeedback>
+              <View style={{ backgroundColor: '#fff', borderRadius: 16, width: '90%', maxHeight: '80%', padding: 20 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                  <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Selecione um Produto</Text>
+                  <TouchableOpacity onPress={closeIntelModal}>
+                    <Ionicons name="close-circle" size={28} color="#a0aec0" />
+                  </TouchableOpacity>
+                </View>
+                
+                <View style={{ flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 8, alignItems: 'center', paddingHorizontal: 10, height: 48, marginBottom: 15 }}>
+                  <Ionicons name="search" size={20} color="#64748b" />
+                  <TextInput 
+                    placeholder="Buscar produto..." 
+                    placeholderTextColor="#94a3b8"
+                    value={intelSearch} 
+                    onChangeText={setIntelSearch} 
+                    style={{ flex: 1, paddingLeft: 10, color: '#333', height: '100%' }} 
+                  />
+                  {intelSearch.length > 0 && (
+                    <TouchableOpacity onPress={() => setIntelSearch('')}>
+                      <Ionicons name="close-circle" size={20} color="#94a3b8" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <FlatList
+                  data={products.filter(p => p.nome.toLowerCase().includes(intelSearch.toLowerCase()))}
+                  keyExtractor={item => item.id}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity 
+                      onPress={() => { setIntelSelectedProduct(item.id); closeIntelModal(); }} 
+                      style={{ paddingVertical: 15, borderBottomWidth: 1, borderColor: '#edf2f7', flexDirection: 'row', justifyContent: 'space-between' }}
+                    >
+                      <Text style={{ fontSize: 16, color: '#2d3748', fontWeight: intelSelectedProduct === item.id ? 'bold' : 'normal' }}>{item.nome}</Text>
+                      {intelSelectedProduct === item.id && <Ionicons name="checkmark-circle" size={20} color="#007AFF" />}
+                    </TouchableOpacity>
+                  )}
+                  showsVerticalScrollIndicator={false}
+                />
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
     </View>
   );
 };
+
 
 const PdvScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
