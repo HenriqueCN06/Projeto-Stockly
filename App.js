@@ -4544,6 +4544,36 @@ const DashboardScreen = ({ navigation }) => {
     }).start();
   }, [showGrowthTooltip]);
   
+  const [activeIntelTooltip, setActiveIntelTooltip] = useState(null);
+  const animUnidades = useRef(new Animated.Value(0)).current;
+  const animMargem = useRef(new Animated.Value(0)).current;
+  const animReceita = useRef(new Animated.Value(0)).current;
+  const animLucro = useRef(new Animated.Value(0)).current;
+  const animCapital = useRef(new Animated.Value(0)).current;
+  const animRoi = useRef(new Animated.Value(0)).current;
+
+  const animProdUnidades = useRef(new Animated.Value(0)).current;
+  const animProdMargem = useRef(new Animated.Value(0)).current;
+  const animProdReceita = useRef(new Animated.Value(0)).current;
+  const animProdLucro = useRef(new Animated.Value(0)).current;
+  const animProdCapital = useRef(new Animated.Value(0)).current;
+  const animProdRoi = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(animUnidades, { toValue: activeIntelTooltip === 'unidades' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animMargem, { toValue: activeIntelTooltip === 'margem' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animReceita, { toValue: activeIntelTooltip === 'receita' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animLucro, { toValue: activeIntelTooltip === 'lucro' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animCapital, { toValue: activeIntelTooltip === 'capital' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animRoi, { toValue: activeIntelTooltip === 'roi' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+
+    Animated.timing(animProdUnidades, { toValue: activeIntelTooltip === 'prod_unidades' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animProdMargem, { toValue: activeIntelTooltip === 'prod_margem' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animProdReceita, { toValue: activeIntelTooltip === 'prod_receita' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animProdLucro, { toValue: activeIntelTooltip === 'prod_lucro' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animProdCapital, { toValue: activeIntelTooltip === 'prod_capital' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(animProdRoi, { toValue: activeIntelTooltip === 'prod_roi' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
+  }, [activeIntelTooltip]);
   // 2. Gráfico Mensal e Top 5
   const [timeSpan, setTimeSpan] = useState('Mês');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
@@ -4792,6 +4822,74 @@ const DashboardScreen = ({ navigation }) => {
     if (lojaAtiva) carregarIntel();
   }, [lojaAtiva, intelFilter]);
 
+  const seedDashboardData = async () => {
+    if (!lojaAtiva) return;
+    try {
+      setIntelLoading(true);
+      
+      const { data: prods } = await supabase.from('produtos').select('*').eq('loja_id', lojaAtiva.id);
+      if (!prods || prods.length === 0) {
+        Alert.alert("Aviso", "Adicione produtos antes de gerar o histórico.");
+        return;
+      }
+      const pIds = prods.map(p => p.id);
+
+      await supabase.from('movimentacoes').delete().in('produto_id', pIds);
+
+      const novasMovimentacoes = [];
+      const agora = new Date();
+      const me = await supabase.auth.getUser();
+      const uid = me?.data?.user?.id;
+
+      prods.forEach(p => {
+        const dtEntrada = new Date();
+        dtEntrada.setDate(agora.getDate() - 180);
+        
+        novasMovimentacoes.push({
+          produto_id: p.id,
+          usuario_id: uid,
+          tipo: 'ENTRADA',
+          quantidade: 500,
+          preco_custo_hist: p.preco_custo || 10,
+          preco_venda_hist: p.preco_venda || 20,
+          is_venda: false,
+          observacao: 'Seed Inicial',
+          criado_em: dtEntrada.toISOString()
+        });
+
+        const numVendas = Math.floor(Math.random() * 30) + 15;
+        for (let i = 0; i < numVendas; i++) {
+          const diasAtras = Math.floor(Math.random() * 180);
+          const dtVenda = new Date();
+          dtVenda.setDate(agora.getDate() - diasAtras);
+          
+          novasMovimentacoes.push({
+            produto_id: p.id,
+            usuario_id: uid,
+            tipo: 'SAIDA',
+            quantidade: Math.floor(Math.random() * 5) + 1,
+            preco_custo_hist: p.preco_custo || 10,
+            preco_venda_hist: p.preco_venda || 20,
+            is_venda: true,
+            observacao: 'Venda Seed',
+            criado_em: dtVenda.toISOString()
+          });
+        }
+      });
+
+      const { error: errInsert } = await supabase.from('movimentacoes').insert(novasMovimentacoes);
+      if (errInsert) throw errInsert;
+
+      Alert.alert("Sucesso", "Histórico de 6 meses gerado com sucesso!");
+      setIntelFilter('Tudo'); // forçar re-render na aba de inteligência
+    } catch (e) {
+      Alert.alert("Erro", e.message);
+    } finally {
+      setIntelLoading(false);
+    }
+  };
+
+
   // Efeito 2: Gráfico Mensal e Top 5 Produtos
   useEffect(() => {
     const carregarGraficoERanking = async () => {
@@ -5003,6 +5101,7 @@ const DashboardScreen = ({ navigation }) => {
       style={{ flex: 1, backgroundColor: '#f0f4f8' }}
       onStartShouldSetResponder={() => {
         if (showGrowthTooltip) setShowGrowthTooltip(false);
+        if (activeIntelTooltip) setActiveIntelTooltip(null);
         return false;
       }}
     >
@@ -5015,7 +5114,10 @@ const DashboardScreen = ({ navigation }) => {
 
       <ScrollView 
         contentContainerStyle={{ padding: 20 }}
-        onScrollBeginDrag={() => { if (showGrowthTooltip) setShowGrowthTooltip(false) }}
+        onScrollBeginDrag={() => { 
+          if (showGrowthTooltip) setShowGrowthTooltip(false);
+          if (activeIntelTooltip) setActiveIntelTooltip(null);
+        }}
         scrollEventThrottle={16}
       >
         
@@ -5026,7 +5128,7 @@ const DashboardScreen = ({ navigation }) => {
           colors={['#007AFF', '#0056b3']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={{ borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 8 }}
+          style={{ borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 8, zIndex: 100 }}
         >
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
             <Text style={{ color: '#e6f2ff', fontSize: 16, fontWeight: '600' }}>Vendas Realizadas</Text>
@@ -5076,12 +5178,13 @@ const DashboardScreen = ({ navigation }) => {
                           </Text>
                         </TouchableOpacity>
 
-                        <Animated.View style={{ opacity: tooltipAnim, transform: [{ translateY: tooltipAnim.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: showGrowthTooltip ? 'auto' : 'none', position: 'absolute', top: 35, left: '50%', marginLeft: -100, width: 200, backgroundColor: '#1a202c', padding: 12, borderRadius: 8, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.3, shadowRadius: 5, elevation: 8 }}>
-                          {/* Seta para cima (triângulo) */}
-                          <View style={{ position: 'absolute', top: -6, left: 94, width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 6, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#1a202c' }} />
-                          <Text style={{ color: '#e2e8f0', fontSize: 12, lineHeight: 18, textAlign: 'center' }}>
-                            <Text style={{ fontWeight: 'bold', color: crescimento >= 0 ? '#48bb78' : '#f56565' }}>{crescimento >= 0 ? 'Aumento' : 'Queda'} nas vendas</Text> em relação {filter === 'Hoje' ? 'a ontem.' : filter === '7 Dias' ? 'à semana passada.' : filter === '30 Dias' ? 'ao mês passado.' : 'ao ano passado.'}
-                          </Text>
+                        <Animated.View style={{ opacity: tooltipAnim, transform: [{ translateY: tooltipAnim.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: showGrowthTooltip ? 'auto' : 'none', position: 'absolute', top: 35, left: '50%', marginLeft: -100, width: 200, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                          <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                            <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18, textAlign: 'center' }}>
+                              <Text style={{ fontWeight: 'bold', color: crescimento >= 0 ? '#38a169' : '#e53e3e' }}>{crescimento >= 0 ? 'Aumento' : 'Queda'} nas vendas</Text> em relação {filter === 'Hoje' ? 'a ontem.' : filter === '7 Dias' ? 'à semana passada.' : filter === '30 Dias' ? 'ao mês passado.' : 'ao ano passado.'}
+                            </Text>
+                          </View>
+                          <View style={{ position: 'absolute', top: -6, left: 94, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
                         </Animated.View>
                       </View>
                     )}
@@ -5257,6 +5360,12 @@ const DashboardScreen = ({ navigation }) => {
         {/* ========================================================
             NOVA: INTELIGÊNCIA DE NEGÓCIO & DESEMPENHO (LUPA)
             ======================================================== */}
+        <TouchableOpacity 
+          onPress={seedDashboardData} 
+          style={{ backgroundColor: '#ed8936', padding: 15, borderRadius: 12, marginBottom: 15, alignItems: 'center', shadowColor: '#000', shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.1, shadowRadius: 3, elevation: 2 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 14 }}>🪄 Gerar Histórico Falso (Apaga o Atual)</Text>
+        </TouchableOpacity>
         <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -5298,34 +5407,94 @@ const DashboardScreen = ({ navigation }) => {
               {/* Estatísticas Gerais */}
               <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Visão Geral da Loja ({intelFilter})</Text>
               <View style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', padding: 15, marginBottom: 20 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <View>
-                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>UNIDADES VENDIDAS</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, zIndex: 30 }}>
+                  <View style={{ position: 'relative', zIndex: 30 }}>
+                    <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'unidades' ? null : 'unidades')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                      <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold', marginRight: 4 }}>UNIDADES VENDIDAS</Text>
+                      <Ionicons name="information-circle-outline" size={14} color="#a0aec0" />
+                    </TouchableOpacity>
                     <Text style={{ fontSize: 16, color: '#2d3748', fontWeight: 'bold' }}>{intelTotals.qtdTotal || 0} un</Text>
+                    
+                    <Animated.View style={{ opacity: animUnidades, transform: [{ translateY: animUnidades.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'unidades' ? 'auto' : 'none', position: 'absolute', top: 25, left: -5, width: 200, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                      <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                        <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18 }}>A soma total de todos os itens que foram vendidos no período selecionado.</Text>
+                      </View>
+                      <View style={{ position: 'absolute', top: -6, left: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                    </Animated.View>
                   </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>MARGEM MÉDIA</Text>
+                  <View style={{ alignItems: 'flex-end', position: 'relative', zIndex: 30 }}>
+                    <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'margem' ? null : 'margem')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                      <Ionicons name="information-circle-outline" size={14} color="#a0aec0" style={{ marginRight: 4 }} />
+                      <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>MARGEM MÉDIA</Text>
+                    </TouchableOpacity>
                     <Text style={{ fontSize: 16, color: (intelTotals.margemMedia || 0) >= 20 ? '#38a169' : '#e53e3e', fontWeight: 'bold' }}>{(intelTotals.margemMedia || 0).toFixed(1)}%</Text>
+                    
+                    <Animated.View style={{ opacity: animMargem, transform: [{ translateY: animMargem.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'margem' ? 'auto' : 'none', position: 'absolute', top: 25, right: -5, width: 220, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                      <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                        <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18, textAlign: 'right' }}>A porcentagem média de lucro em relação à receita.{'\n'}Fórmula: (Lucro / Receita) x 100</Text>
+                      </View>
+                      <View style={{ position: 'absolute', top: -6, right: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                    </Animated.View>
                   </View>
                 </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <View>
-                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RECEITA GERADA</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, zIndex: 20 }}>
+                  <View style={{ position: 'relative', zIndex: 20 }}>
+                    <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'receita' ? null : 'receita')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                      <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold', marginRight: 4 }}>RECEITA GERADA</Text>
+                      <Ionicons name="information-circle-outline" size={14} color="#a0aec0" />
+                    </TouchableOpacity>
                     <Text style={{ fontSize: 15, color: '#2d3748', fontWeight: 'bold' }}>{formatCurrency(intelTotals.receita || 0)}</Text>
+                    
+                    <Animated.View style={{ opacity: animReceita, transform: [{ translateY: animReceita.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'receita' ? 'auto' : 'none', position: 'absolute', top: 25, left: -5, width: 220, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                      <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                        <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18 }}>Todo o dinheiro bruto que entrou no caixa com as vendas no período selecionado.</Text>
+                      </View>
+                      <View style={{ position: 'absolute', top: -6, left: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                    </Animated.View>
                   </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>LUCRO LÍQUIDO</Text>
+                  <View style={{ alignItems: 'flex-end', position: 'relative', zIndex: 20 }}>
+                    <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'lucro' ? null : 'lucro')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                      <Ionicons name="information-circle-outline" size={14} color="#a0aec0" style={{ marginRight: 4 }} />
+                      <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>LUCRO LÍQUIDO</Text>
+                    </TouchableOpacity>
                     <Text style={{ fontSize: 15, color: '#38a169', fontWeight: 'bold' }}>{formatCurrency(intelTotals.lucro || 0)}</Text>
+                    
+                    <Animated.View style={{ opacity: animLucro, transform: [{ translateY: animLucro.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'lucro' ? 'auto' : 'none', position: 'absolute', top: 25, right: -5, width: 220, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                      <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                        <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18, textAlign: 'right' }}>A receita gerada menos o Custo da Mercadoria Vendida (CMV).</Text>
+                      </View>
+                      <View style={{ position: 'absolute', top: -6, right: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                    </Animated.View>
                   </View>
                 </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderColor: '#edf2f7' }}>
-                  <View>
-                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>CAPITAL INVESTIDO</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderColor: '#edf2f7', zIndex: 10 }}>
+                  <View style={{ position: 'relative', zIndex: 10 }}>
+                    <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'capital' ? null : 'capital')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                      <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold', marginRight: 4 }}>CAPITAL INVESTIDO</Text>
+                      <Ionicons name="information-circle-outline" size={14} color="#a0aec0" />
+                    </TouchableOpacity>
                     <Text style={{ fontSize: 15, color: '#4a5568', fontWeight: 'bold' }}>{formatCurrency(intelTotals.investimentoTotal || 0)}</Text>
+                    
+                    <Animated.View style={{ opacity: animCapital, transform: [{ translateY: animCapital.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'capital' ? 'auto' : 'none', position: 'absolute', top: 25, left: -5, width: 240, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                      <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                        <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18 }}>O custo das unidades vendidas MAIS o custo de todo o estoque atual parado nas prateleiras.</Text>
+                      </View>
+                      <View style={{ position: 'absolute', top: -6, left: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                    </Animated.View>
                   </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RENTABILIDADE (ROI)</Text>
+                  <View style={{ alignItems: 'flex-end', position: 'relative', zIndex: 10 }}>
+                    <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'roi' ? null : 'roi')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                      <Ionicons name="information-circle-outline" size={14} color="#a0aec0" style={{ marginRight: 4 }} />
+                      <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RENTABILIDADE (ROI)</Text>
+                    </TouchableOpacity>
                     <Text style={{ fontSize: 15, color: '#d69e2e', fontWeight: 'bold' }}>{(intelTotals.rentabilidadeGeral || 0).toFixed(1)}%</Text>
+                    
+                    <Animated.View style={{ opacity: animRoi, transform: [{ translateY: animRoi.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'roi' ? 'auto' : 'none', position: 'absolute', top: 25, right: -5, width: 240, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                      <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                        <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18, textAlign: 'right' }}>Mostra o quanto do investimento feito na loja já se pagou através dos lucros. Um ROI de 100% significa que o investimento já se pagou por completo.{'\n'}Fórmula: (Lucro / Capital) x 100</Text>
+                      </View>
+                      <View style={{ position: 'absolute', top: -6, right: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                    </Animated.View>
                   </View>
                 </View>
                 <View style={{ backgroundColor: '#f8fafc', padding: 12, borderRadius: 8, marginTop: 5, alignItems: 'center' }}>
@@ -5340,8 +5509,29 @@ const DashboardScreen = ({ navigation }) => {
                       </TouchableOpacity>
                     ))}
                   </View>
-                  <Text style={{ fontSize: 12, color: '#4a5568', textAlign: 'center' }}>
-                    O melhor dia da semana em <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{bestDayMetric.toLowerCase()}</Text> é a <Text style={{ fontWeight: 'bold', color: '#3182ce' }}>{(intelTotals.bestDay && typeof intelTotals.bestDay === 'object') ? intelTotals.bestDay[bestDayMetric] : '-'}</Text>.
+                  <Text style={{ fontSize: 12, color: '#4a5568', textAlign: 'center', lineHeight: 18 }}>
+                    {(() => {
+                      const rawDay = (intelTotals.bestDay && typeof intelTotals.bestDay === 'object') ? intelTotals.bestDay[bestDayMetric] : '-';
+                      if (!rawDay || rawDay === '-') return `Nenhum dado de ${bestDayMetric.toLowerCase()} no período.`;
+                      
+                      const isPlural = intelFilter !== '7 Dias';
+                      const isMasc = rawDay === 'Sábado' || rawDay === 'Domingo';
+                      
+                      let prefix = '';
+                      if (intelFilter === '7 Dias') prefix = 'Na última semana, o melhor dia da semana em';
+                      else if (intelFilter === '30 Dias') prefix = 'No último mês, o melhor dia da semana em';
+                      else if (intelFilter === 'Ano') prefix = 'No último ano, o melhor dia da semana em';
+                      else prefix = 'No histórico geral, o melhor dia da semana em';
+
+                      if (!isPlural) {
+                        const article = isMasc ? 'o' : 'a';
+                        return <>{prefix} <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{bestDayMetric.toLowerCase()}</Text> foi {article} <Text style={{ fontWeight: 'bold', color: '#3182ce' }}>{rawDay}</Text>.</>;
+                      } else {
+                        const article = isMasc ? 'os' : 'as';
+                        const pluralDay = rawDay + 's';
+                        return <>{prefix} <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{bestDayMetric.toLowerCase()}</Text> foram {article} <Text style={{ fontWeight: 'bold', color: '#3182ce' }}>{pluralDay}</Text>.</>;
+                      }
+                    })()}
                   </Text>
                 </View>
               </View>
@@ -5363,34 +5553,88 @@ const DashboardScreen = ({ navigation }) => {
                       const percReceita = intelTotals.receita > 0 ? ((selStat.receita / intelTotals.receita) * 100).toFixed(1) : 0;
                       return (
                         <>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
-                            <View>
-                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>UNIDADES VENDIDAS</Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, zIndex: 30 }}>
+                            <View style={{ position: 'relative', zIndex: 30 }}>
+                              <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'prod_unidades' ? null : 'prod_unidades')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                                <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold', marginRight: 4 }}>UNIDADES VENDIDAS</Text>
+                                <Ionicons name="information-circle-outline" size={14} color="#a0aec0" />
+                              </TouchableOpacity>
                               <Text style={{ fontSize: 16, color: '#2d3748', fontWeight: 'bold' }}>{selStat.qtd} un</Text>
+                              <Animated.View style={{ opacity: animProdUnidades, transform: [{ translateY: animProdUnidades.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'prod_unidades' ? 'auto' : 'none', position: 'absolute', top: 25, left: -5, width: 200, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                                <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                                  <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18 }}>A soma total de todos os itens deste produto que foram vendidos no período selecionado.</Text>
+                                </View>
+                                <View style={{ position: 'absolute', top: -6, left: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                              </Animated.View>
                             </View>
-                            <View style={{ alignItems: 'flex-end' }}>
-                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>MARGEM DE LUCRO</Text>
+                            <View style={{ alignItems: 'flex-end', position: 'relative', zIndex: 30 }}>
+                              <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'prod_margem' ? null : 'prod_margem')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                                <Ionicons name="information-circle-outline" size={14} color="#a0aec0" style={{ marginRight: 4 }} />
+                                <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>MARGEM DE LUCRO</Text>
+                              </TouchableOpacity>
                               <Text style={{ fontSize: 16, color: selStat.margem >= 20 ? '#38a169' : '#e53e3e', fontWeight: 'bold' }}>{selStat.margem.toFixed(1)}%</Text>
+                              <Animated.View style={{ opacity: animProdMargem, transform: [{ translateY: animProdMargem.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'prod_margem' ? 'auto' : 'none', position: 'absolute', top: 25, right: -5, width: 220, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                                <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                                  <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18, textAlign: 'right' }}>A porcentagem média de lucro para as vendas deste produto.{'\n'}Fórmula: (Lucro / Receita) x 100</Text>
+                                </View>
+                                <View style={{ position: 'absolute', top: -6, right: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                              </Animated.View>
                             </View>
                           </View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
-                            <View>
-                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RECEITA GERADA</Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, zIndex: 20 }}>
+                            <View style={{ position: 'relative', zIndex: 20 }}>
+                              <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'prod_receita' ? null : 'prod_receita')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                                <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold', marginRight: 4 }}>RECEITA GERADA</Text>
+                                <Ionicons name="information-circle-outline" size={14} color="#a0aec0" />
+                              </TouchableOpacity>
                               <Text style={{ fontSize: 15, color: '#2d3748', fontWeight: 'bold' }}>{formatCurrency(selStat.receita)}</Text>
+                              <Animated.View style={{ opacity: animProdReceita, transform: [{ translateY: animProdReceita.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'prod_receita' ? 'auto' : 'none', position: 'absolute', top: 25, left: -5, width: 220, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                                <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                                  <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18 }}>Todo o dinheiro bruto que entrou no caixa proveniente deste produto no período selecionado.</Text>
+                                </View>
+                                <View style={{ position: 'absolute', top: -6, left: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                              </Animated.View>
                             </View>
-                            <View style={{ alignItems: 'flex-end' }}>
-                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>LUCRO LÍQUIDO</Text>
+                            <View style={{ alignItems: 'flex-end', position: 'relative', zIndex: 20 }}>
+                              <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'prod_lucro' ? null : 'prod_lucro')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                                <Ionicons name="information-circle-outline" size={14} color="#a0aec0" style={{ marginRight: 4 }} />
+                                <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>LUCRO LÍQUIDO</Text>
+                              </TouchableOpacity>
                               <Text style={{ fontSize: 15, color: '#38a169', fontWeight: 'bold' }}>{formatCurrency(selStat.lucro)}</Text>
+                              <Animated.View style={{ opacity: animProdLucro, transform: [{ translateY: animProdLucro.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'prod_lucro' ? 'auto' : 'none', position: 'absolute', top: 25, right: -5, width: 220, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                                <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                                  <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18, textAlign: 'right' }}>A receita deste produto menos o seu Custo da Mercadoria Vendida (CMV).</Text>
+                                </View>
+                                <View style={{ position: 'absolute', top: -6, right: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                              </Animated.View>
                             </View>
                           </View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderColor: '#edf2f7' }}>
-                            <View>
-                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>CAPITAL INVESTIDO</Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderColor: '#edf2f7', zIndex: 10 }}>
+                            <View style={{ position: 'relative', zIndex: 10 }}>
+                              <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'prod_capital' ? null : 'prod_capital')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                                <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold', marginRight: 4 }}>CAPITAL INVESTIDO</Text>
+                                <Ionicons name="information-circle-outline" size={14} color="#a0aec0" />
+                              </TouchableOpacity>
                               <Text style={{ fontSize: 15, color: '#4a5568', fontWeight: 'bold' }}>{formatCurrency(selStat.investimento || 0)}</Text>
+                              <Animated.View style={{ opacity: animProdCapital, transform: [{ translateY: animProdCapital.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'prod_capital' ? 'auto' : 'none', position: 'absolute', top: 25, left: -5, width: 240, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                                <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                                  <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18 }}>O custo das unidades vendidas deste produto MAIS o custo de todo o estoque deste produto atual parado nas prateleiras.</Text>
+                                </View>
+                                <View style={{ position: 'absolute', top: -6, left: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                              </Animated.View>
                             </View>
-                            <View style={{ alignItems: 'flex-end' }}>
-                              <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RENTABILIDADE (ROI)</Text>
+                            <View style={{ alignItems: 'flex-end', position: 'relative', zIndex: 10 }}>
+                              <TouchableOpacity onPress={() => setActiveIntelTooltip(activeIntelTooltip === 'prod_roi' ? null : 'prod_roi')} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                                <Ionicons name="information-circle-outline" size={14} color="#a0aec0" style={{ marginRight: 4 }} />
+                                <Text style={{ fontSize: 11, color: '#718096', fontWeight: 'bold' }}>RENTABILIDADE (ROI)</Text>
+                              </TouchableOpacity>
                               <Text style={{ fontSize: 15, color: '#d69e2e', fontWeight: 'bold' }}>{(selStat.rentabilidade || 0).toFixed(1)}%</Text>
+                              <Animated.View style={{ opacity: animProdRoi, transform: [{ translateY: animProdRoi.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: activeIntelTooltip === 'prod_roi' ? 'auto' : 'none', position: 'absolute', top: 25, right: -5, width: 240, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                                <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                                  <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18, textAlign: 'right' }}>Mostra o quanto do investimento feito neste produto já se pagou através dos lucros. Um ROI de 100% significa que o investimento nele já se pagou por completo.{'\n'}Fórmula: (Lucro / Capital) x 100</Text>
+                                </View>
+                                <View style={{ position: 'absolute', top: -6, right: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                              </Animated.View>
                             </View>
                           </View>
                           <View style={{ backgroundColor: '#f8fafc', padding: 10, borderRadius: 8, marginTop: 5 }}>
