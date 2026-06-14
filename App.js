@@ -4500,6 +4500,52 @@ const MainAppDrawer = () => {
   );
 };
 
+const TimeSpanDropdown = ({ options, value, onSelect, fullWidth, color = '#007AFF' }) => {
+  const [open, setOpen] = useState(false);
+  const buttonRef = React.useRef(null);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0, width: 0 });
+
+  const handleOpen = () => {
+    buttonRef.current?.measure((fx, fy, width, height, px, py) => {
+      setDropdownPos({ top: py + height + 5, right: Dimensions.get('window').width - px - width, width });
+      setOpen(true);
+    });
+  };
+
+  return (
+    <View style={{ zIndex: 100, width: fullWidth ? '100%' : 'auto' }}>
+      <TouchableOpacity 
+        ref={buttonRef}
+        onPress={handleOpen}
+        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: fullWidth ? 'space-between' : 'flex-start', backgroundColor: color, paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20 }}
+      >
+        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 13, marginRight: fullWidth ? 0 : 6 }}>{value}</Text>
+        <Ionicons name="chevron-down" size={16} color="#fff" />
+      </TouchableOpacity>
+      
+      <Modal visible={open} transparent={true} animationType="fade">
+        <TouchableOpacity 
+          style={{ flex: 1 }} 
+          activeOpacity={1} 
+          onPress={() => setOpen(false)}
+        >
+          <View style={{ position: 'absolute', top: dropdownPos.top, right: dropdownPos.right, width: Math.max(dropdownPos.width, 120), backgroundColor: '#fff', borderRadius: 12, padding: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 5 }}>
+            {options.map((opt) => (
+              <TouchableOpacity 
+                key={opt} 
+                onPress={() => { onSelect(opt); setOpen(false); }}
+                style={{ paddingVertical: 10, paddingHorizontal: 15, borderRadius: 8, backgroundColor: value === opt ? color + '1A' : '#fff' }}
+              >
+                <Text style={{ color: value === opt ? color : '#4a5568', fontWeight: value === opt ? 'bold' : 'normal', fontSize: 13, textAlign: fullWidth ? 'left' : 'right' }}>{opt}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </View>
+  );
+};
+
 const DashboardScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
   const products = useStore(state => state.products);
@@ -4513,9 +4559,14 @@ const DashboardScreen = ({ navigation }) => {
   const [salesTotalPrev, setSalesTotalPrev] = useState(0);
   const [filter, setFilter] = useState('7 Dias');
   const [showGrowthTooltip, setShowGrowthTooltip] = useState(false);
+  const [showTicketTooltip, setShowTicketTooltip] = useState(false);
 
   // Pivot Inteligência
   const [intelFilter, setIntelFilter] = useState('30 Dias');
+  const [intelTimeMode, setIntelTimeMode] = useState('corridos');
+  const [intelSelectedMonth, setIntelSelectedMonth] = useState(new Date().getMonth());
+  const [intelSelectedYear, setIntelSelectedYear] = useState(new Date().getFullYear());
+  const [intelTimeSpan, setIntelTimeSpan] = useState('Mês');
   const [intelStats, setIntelStats] = useState([]);
   const [intelTotals, setIntelTotals] = useState({ receita: 0, lucro: 0, bestDay: '' });
   const [bestDayMetric, setBestDayMetric] = useState('Receita');
@@ -4535,6 +4586,7 @@ const DashboardScreen = ({ navigation }) => {
   };
 
   const tooltipAnim = useRef(new Animated.Value(0)).current;
+  const ticketAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.timing(tooltipAnim, {
@@ -4543,6 +4595,14 @@ const DashboardScreen = ({ navigation }) => {
       useNativeDriver: true,
     }).start();
   }, [showGrowthTooltip]);
+
+  useEffect(() => {
+    Animated.timing(ticketAnim, {
+      toValue: showTicketTooltip ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [showTicketTooltip]);
   
   const [activeIntelTooltip, setActiveIntelTooltip] = useState(null);
   const animUnidades = useRef(new Animated.Value(0)).current;
@@ -4575,7 +4635,8 @@ const DashboardScreen = ({ navigation }) => {
     Animated.timing(animProdRoi, { toValue: activeIntelTooltip === 'prod_roi' ? 1 : 0, duration: 200, useNativeDriver: true }).start();
   }, [activeIntelTooltip]);
   // 2. Gráfico Mensal e Top 5
-  const [timeSpan, setTimeSpan] = useState('Mês');
+  const [timeSpan, setTimeSpan] = useState('30 Dias');
+  const [chartTimeMode, setChartTimeMode] = useState('corridos');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [chartMetric, setChartMetric] = useState('Receita');
@@ -4688,20 +4749,42 @@ const DashboardScreen = ({ navigation }) => {
     const carregarIntel = async () => {
       setIntelLoading(true);
       try {
-        const hoje = new Date();
-        let dataLimite = new Date();
-
-        if (intelFilter === '7 Dias') {
-          dataLimite.setDate(hoje.getDate() - 7);
-        } else if (intelFilter === '30 Dias') {
-          dataLimite.setDate(hoje.getDate() - 30);
-        } else if (intelFilter === 'Ano') {
-          dataLimite.setFullYear(hoje.getFullYear() - 1);
+        let dateStart, dateEnd;
+        if (intelTimeMode === 'calendario') {
+          const q = Math.floor(intelSelectedMonth / 3) + 1;
+          const s = Math.floor(intelSelectedMonth / 6) + 1;
+          if (intelFilter === 'Mês') {
+            dateStart = new Date(intelSelectedYear, intelSelectedMonth, 1);
+            dateEnd = new Date(intelSelectedYear, intelSelectedMonth + 1, 0, 23, 59, 59);
+          } else if (intelFilter === 'Trimestre') {
+            dateStart = new Date(intelSelectedYear, (q - 1) * 3, 1);
+            dateEnd = new Date(intelSelectedYear, q * 3, 0, 23, 59, 59);
+          } else if (intelFilter === 'Semestre') {
+            dateStart = new Date(intelSelectedYear, (s - 1) * 6, 1);
+            dateEnd = new Date(intelSelectedYear, s * 6, 0, 23, 59, 59);
+          } else {
+            dateStart = new Date(intelSelectedYear, 0, 1);
+            dateEnd = new Date(intelSelectedYear, 12, 0, 23, 59, 59);
+          }
+        } else {
+          const hoje = new Date();
+          dateEnd = new Date();
+          dateStart = new Date();
+          if (intelFilter === '7 Dias') {
+            dateStart.setDate(hoje.getDate() - 6);
+          } else if (intelFilter === '30 Dias') {
+            dateStart.setDate(hoje.getDate() - 29);
+          } else if (intelFilter === 'Ano') {
+            dateStart.setFullYear(hoje.getFullYear() - 1);
+          } else {
+            dateStart = new Date(2000, 0, 1);
+          }
+          dateStart.setHours(0,0,0,0);
         }
 
         let query = supabase.from('movimentacoes').select('quantidade, preco_venda_hist, preco_custo_hist, criado_em, produtos!inner(id, nome, loja_id, estoque_atual)').eq('is_venda', true).eq('produtos.loja_id', lojaAtiva.id);
-        if (intelFilter !== 'Tudo') {
-          query = query.gte('criado_em', dataLimite.toISOString());
+        if (intelTimeMode === 'calendario' || intelFilter !== 'Tudo') {
+          query = query.gte('criado_em', dateStart.toISOString()).lte('criado_em', dateEnd.toISOString());
         }
 
         const { data, error } = await query;
@@ -4820,7 +4903,7 @@ const DashboardScreen = ({ navigation }) => {
       }
     };
     if (lojaAtiva) carregarIntel();
-  }, [lojaAtiva, intelFilter]);
+  }, [lojaAtiva, intelFilter, intelTimeMode, intelSelectedMonth, intelSelectedYear]);
 
   const seedDashboardData = async () => {
     if (!lojaAtiva) return;
@@ -4896,30 +4979,47 @@ const DashboardScreen = ({ navigation }) => {
       setChartLoading(true);
       try {
         let dateStart, dateEnd, dataPoints;
+        const now = new Date();
         const q = Math.floor(selectedMonth / 3) + 1;
         const s = Math.floor(selectedMonth / 6) + 1;
 
-        if (timeSpan === 'Mês') {
-          dateStart = new Date(selectedYear, selectedMonth, 1);
-          dateEnd = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
-          dataPoints = dateEnd.getDate();
-        } else if (timeSpan === 'Trimestre') {
-          dateStart = new Date(selectedYear, (q - 1) * 3, 1);
-          dateEnd = new Date(selectedYear, q * 3, 0, 23, 59, 59);
-          dataPoints = 3;
-        } else if (timeSpan === 'Semestre') {
-          dateStart = new Date(selectedYear, (s - 1) * 6, 1);
-          dateEnd = new Date(selectedYear, s * 6, 0, 23, 59, 59);
-          dataPoints = 6;
+        if (chartTimeMode === 'calendario') {
+          if (timeSpan === 'Mês') {
+            dateStart = new Date(selectedYear, selectedMonth, 1);
+            dateEnd = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
+            dataPoints = dateEnd.getDate();
+          } else if (timeSpan === 'Trimestre') {
+            dateStart = new Date(selectedYear, (q - 1) * 3, 1);
+            dateEnd = new Date(selectedYear, q * 3, 0, 23, 59, 59);
+            dataPoints = 3;
+          } else if (timeSpan === 'Semestre') {
+            dateStart = new Date(selectedYear, (s - 1) * 6, 1);
+            dateEnd = new Date(selectedYear, s * 6, 0, 23, 59, 59);
+            dataPoints = 6;
+          } else {
+            dateStart = new Date(selectedYear, 0, 1);
+            dateEnd = new Date(selectedYear, 12, 0, 23, 59, 59);
+            dataPoints = 12;
+          }
         } else {
-          dateStart = new Date(selectedYear, 0, 1);
-          dateEnd = new Date(selectedYear, 12, 0, 23, 59, 59);
-          dataPoints = 12;
+          dateEnd = new Date();
+          dateStart = new Date();
+          if (timeSpan === '7 Dias') {
+            dateStart.setDate(now.getDate() - 6);
+            dataPoints = 7;
+          } else if (timeSpan === '30 Dias') {
+            dateStart.setDate(now.getDate() - 29);
+            dataPoints = 30;
+          } else { // Ano (365)
+            dateStart.setDate(now.getDate() - 364);
+            dataPoints = 12;
+          }
+          dateStart.setHours(0, 0, 0, 0);
         }
 
         const { data, error } = await supabase
           .from('movimentacoes')
-          .select('produto_id, quantidade, preco_venda_hist, preco_custo_hist, criado_em, produtos!inner(id, nome, loja_id)')
+          .select('produto_id, quantidade, preco_venda_hist, preco_custo_hist, criado_em, produtos!inner(id, nome, loja_id, estoque_atual)')
           .eq('is_venda', true)
           .eq('produtos.loja_id', lojaAtiva.id)
           .gte('criado_em', dateStart.toISOString())
@@ -4928,22 +5028,39 @@ const DashboardScreen = ({ navigation }) => {
         if (error) throw error;
 
         const aggregated = Array(dataPoints).fill(0);
-        const aggregatedReceita = Array(dataPoints).fill(0);
-        const aggregatedLucro = Array(dataPoints).fill(0);
+        const marginMap = {};
         const productStats = {};
 
         if (data) {
           data.forEach(mov => {
             const date = new Date(mov.criado_em);
             let idx = 0;
-            if (timeSpan === 'Mês') {
-              idx = date.getDate() - 1;
-            } else if (timeSpan === 'Trimestre') {
-              idx = date.getMonth() - ((q - 1) * 3);
-            } else if (timeSpan === 'Semestre') {
-              idx = date.getMonth() - ((s - 1) * 6);
+            if (chartTimeMode === 'calendario') {
+              if (timeSpan === 'Mês') {
+                idx = date.getDate() - 1;
+              } else if (timeSpan === 'Trimestre') {
+                idx = date.getMonth() - ((q - 1) * 3);
+              } else if (timeSpan === 'Semestre') {
+                idx = date.getMonth() - ((s - 1) * 6);
+              } else {
+                idx = date.getMonth();
+              }
             } else {
-              idx = date.getMonth();
+              if (timeSpan === '7 Dias' || timeSpan === '30 Dias') {
+                const startOfDateStart = new Date(dateStart);
+                startOfDateStart.setHours(0,0,0,0);
+                const startOfDate = new Date(date);
+                startOfDate.setHours(0,0,0,0);
+                const diffTime = startOfDate - startOfDateStart;
+                idx = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                if (idx < 0) idx = 0;
+                if (idx >= dataPoints) idx = dataPoints - 1;
+              } else {
+                const monthDiff = (date.getFullYear() - dateStart.getFullYear()) * 12 + (date.getMonth() - dateStart.getMonth());
+                idx = monthDiff;
+                if (idx < 0) idx = 0;
+                if (idx >= 12) idx = 11;
+              }
             }
 
             const qtd = mov.quantidade || 0;
@@ -4955,21 +5072,34 @@ const DashboardScreen = ({ navigation }) => {
             if (chartMetric === 'Receita') aggregated[idx] += (qtd * venda);
             else if (chartMetric === 'Lucro') aggregated[idx] += (qtd * (venda - custo));
             else if (chartMetric === 'Itens') aggregated[idx] += qtd;
-            else if (chartMetric === 'Margem') {
-              aggregatedReceita[idx] += (qtd * venda);
-              aggregatedLucro[idx] += (qtd * (venda - custo));
+            else if (chartMetric === 'Rentabilidade') {
+              if (!marginMap[idx]) marginMap[idx] = { l: 0, c: 0 };
+              marginMap[idx].l += (qtd * (venda - custo));
+              marginMap[idx].c += (qtd * custo);
             }
 
-            if (!productStats[pId]) productStats[pId] = { id: pId, nome: pNome, receita: 0, lucro: 0, qtd: 0 };
+            if (!productStats[pId]) {
+              productStats[pId] = { 
+                id: pId, 
+                nome: pNome, 
+                receita: 0, 
+                lucro: 0, 
+                qtd: 0, 
+                custoVendido: 0, 
+                estoqueAtual: mov.produtos?.estoque_atual || 0,
+                ultimoCusto: custo 
+              };
+            }
             productStats[pId].receita += (qtd * venda);
             productStats[pId].lucro += (qtd * (venda - custo));
+            productStats[pId].custoVendido += (qtd * custo);
             productStats[pId].qtd += qtd;
           });
 
-          if (chartMetric === 'Margem') {
+          if (chartMetric === 'Rentabilidade') {
             for (let i = 0; i < dataPoints; i++) {
-              if (aggregatedReceita[i] > 0) {
-                aggregated[i] = (aggregatedLucro[i] / aggregatedReceita[i]) * 100;
+              if (marginMap[i] && marginMap[i].c > 0) {
+                aggregated[i] = (marginMap[i].l / marginMap[i].c) * 100;
               }
             }
           }
@@ -4977,20 +5107,37 @@ const DashboardScreen = ({ navigation }) => {
 
         const monthsShort = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
         let labels = [];
-        if (timeSpan === 'Mês') {
-          labels = Array(dataPoints).fill(0).map((_, i) => {
-            const day = i + 1;
-            if (day === 1 || day === dataPoints || day % 5 === 0) return day.toString();
-            return '';
-          });
-        } else if (timeSpan === 'Trimestre') {
-          const startM = (q - 1) * 3;
-          labels = [monthsShort[startM], monthsShort[startM+1], monthsShort[startM+2]];
-        } else if (timeSpan === 'Semestre') {
-          const startM = (s - 1) * 6;
-          labels = Array(6).fill(0).map((_, i) => monthsShort[startM + i]);
+        if (chartTimeMode === 'calendario') {
+          if (timeSpan === 'Mês') {
+            labels = Array(dataPoints).fill(0).map((_, i) => {
+              const day = i + 1;
+              if (day === 1 || day === dataPoints || (day % 5 === 0 && (dataPoints - day) > 2)) return day.toString();
+              return '';
+            });
+          } else if (timeSpan === 'Trimestre') {
+            const startM = (q - 1) * 3;
+            labels = [monthsShort[startM], monthsShort[startM+1], monthsShort[startM+2]];
+          } else if (timeSpan === 'Semestre') {
+            const startM = (s - 1) * 6;
+            labels = Array(6).fill(0).map((_, i) => monthsShort[startM + i]);
+          } else {
+            labels = monthsShort;
+          }
         } else {
-          labels = monthsShort;
+          labels = Array(dataPoints).fill(0).map((_, i) => {
+            const d = new Date(dateStart);
+            if (timeSpan === '7 Dias' || timeSpan === '30 Dias') {
+              d.setDate(d.getDate() + i);
+              const day = i + 1;
+              if (timeSpan === '7 Dias' || day === 1 || day === dataPoints || (day % 5 === 0 && (dataPoints - day) > 2)) {
+                return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth()+1).toString().padStart(2, '0')}`;
+              }
+              return '';
+            } else {
+              d.setMonth(d.getMonth() + i);
+              return monthsShort[d.getMonth()];
+            }
+          });
         }
 
         if (aggregated.some(val => val > 0)) {
@@ -5000,8 +5147,8 @@ const DashboardScreen = ({ navigation }) => {
               data: aggregated,
               color: (o = 1) => {
                 if (chartMetric === 'Lucro') return `rgba(40,167,69,${o})`;
-                if (chartMetric === 'Itens') return `rgba(255,152,0,${o})`;
-                if (chartMetric === 'Margem') return `rgba(142,68,173,${o})`;
+                if (chartMetric === 'Itens') return `rgba(142,68,173,${o})`;
+                if (chartMetric === 'Rentabilidade') return `rgba(214,158,46,${o})`;
                 return `rgba(0,122,255,${o})`;
               },
               strokeWidth: 3
@@ -5011,14 +5158,15 @@ const DashboardScreen = ({ navigation }) => {
           setChartData(null);
         }
 
-        // Ordenando Ranking dinamicamente
         let sortField = 'receita';
         if (chartMetric === 'Lucro') sortField = 'lucro';
         if (chartMetric === 'Itens') sortField = 'qtd';
-        if (chartMetric === 'Margem') sortField = 'margem';
+        if (chartMetric === 'Rentabilidade') sortField = 'rentabilidade';
 
         const rankingArray = Object.values(productStats).map(p => {
           p.margem = p.receita > 0 ? parseFloat(((p.lucro / p.receita) * 100).toFixed(1)) : 0;
+          const investimento = p.custoVendido + (p.estoqueAtual * p.ultimoCusto);
+          p.rentabilidade = investimento > 0 ? ((p.lucro / investimento) * 100) : 0;
           return p;
         }).sort((a, b) => b[sortField] - a[sortField]).slice(0, 5);
         setTopProducts(rankingArray);
@@ -5030,7 +5178,7 @@ const DashboardScreen = ({ navigation }) => {
       }
     };
     if (lojaAtiva) carregarGraficoERanking();
-  }, [lojaAtiva, selectedMonth, selectedYear, chartMetric, timeSpan]);
+  }, [lojaAtiva, selectedMonth, selectedYear, chartMetric, timeSpan, chartTimeMode]);
 
   // Efeito 3: Raio-X Diário
   useEffect(() => {
@@ -5072,8 +5220,6 @@ const DashboardScreen = ({ navigation }) => {
     if (lojaAtiva) carregarRaioX();
   }, [lojaAtiva, dailyDate]);
 
-  // continuação de dashboard_v2.js
-
   const renderDailyItem = (mov) => {
     const dataHora = new Date(mov.criado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const nome = mov.produtos?.nome || 'Desconhecido';
@@ -5095,12 +5241,20 @@ const DashboardScreen = ({ navigation }) => {
 
   const crescimento = salesTotalPrev > 0 ? (((salesTotal - salesTotalPrev) / salesTotalPrev) * 100).toFixed(1) : 0;
   const ticketMedio = salesCount > 0 ? salesTotal / salesCount : 0;
+  const metricColor = chartMetric === 'Lucro' ? '#28a745' : chartMetric === 'Itens' ? '#8e44ad' : chartMetric === 'Rentabilidade' ? '#d69e2e' : '#007AFF';
+  const intelPeriodLabel = intelTimeMode === 'calendario' 
+    ? (intelFilter === 'Mês' ? `${months[intelSelectedMonth]} ${intelSelectedYear}` :
+       intelFilter === 'Trimestre' ? `${Math.floor(intelSelectedMonth/3)+1}º Tri de ${intelSelectedYear}` :
+       intelFilter === 'Semestre' ? `${Math.floor(intelSelectedMonth/6)+1}º Sem de ${intelSelectedYear}` :
+       `Ano de ${intelSelectedYear}`)
+    : intelFilter;
 
   return (
     <View 
       style={{ flex: 1, backgroundColor: '#f0f4f8' }}
       onStartShouldSetResponder={() => {
         if (showGrowthTooltip) setShowGrowthTooltip(false);
+        if (showTicketTooltip) setShowTicketTooltip(false);
         if (activeIntelTooltip) setActiveIntelTooltip(null);
         return false;
       }}
@@ -5116,14 +5270,12 @@ const DashboardScreen = ({ navigation }) => {
         contentContainerStyle={{ padding: 20 }}
         onScrollBeginDrag={() => { 
           if (showGrowthTooltip) setShowGrowthTooltip(false);
+          if (showTicketTooltip) setShowTicketTooltip(false);
           if (activeIntelTooltip) setActiveIntelTooltip(null);
         }}
         scrollEventThrottle={16}
       >
         
-        {/* ========================================================
-            1. RESUMO SUPERIOR (VENDAS, TICKET MÉDIO E CRESCIMENTO)
-            ======================================================== */}
         <LinearGradient
           colors={['#007AFF', '#0056b3']}
           start={{ x: 0, y: 0 }}
@@ -5139,7 +5291,7 @@ const DashboardScreen = ({ navigation }) => {
             {filters.map(f => (
               <TouchableOpacity
                 key={f}
-                onPress={() => { setFilter(f); setShowGrowthTooltip(false); }}
+                onPress={() => { setFilter(f); setShowGrowthTooltip(false); setShowTicketTooltip(false); }}
                 style={{
                   backgroundColor: filter === f ? '#fff' : 'rgba(255,255,255,0.2)',
                   paddingHorizontal: 15,
@@ -5160,18 +5312,29 @@ const DashboardScreen = ({ navigation }) => {
               <View>
                 <Text style={{ color: '#fff', fontSize: 36, fontWeight: 'bold' }}>{formatCurrency(salesTotal)}</Text>
                 
-                {/* Métricas Extras */}
                 <View style={{ zIndex: 10 }}>
-                  <View style={{ flexDirection: 'row', marginTop: 8, alignItems: 'center' }}>
-                    <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginRight: 10 }}>
-                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
-                        Ticket Médio: {formatCurrency(ticketMedio)}
-                      </Text>
+                  <View style={{ flexDirection: 'row', marginTop: 8, alignItems: 'center', zIndex: 10 }}>
+                    <View style={{ position: 'relative', zIndex: 30 }}>
+                      <TouchableOpacity onPress={() => { setShowTicketTooltip(!showTicketTooltip); setShowGrowthTooltip(false); }} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginRight: 10 }}>
+                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold', marginRight: 4 }}>
+                          Ticket Médio: {formatCurrency(ticketMedio)}
+                        </Text>
+                        <Ionicons name="information-circle-outline" size={14} color="#fff" />
+                      </TouchableOpacity>
+                      
+                      <Animated.View style={{ opacity: ticketAnim, transform: [{ translateY: ticketAnim.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }], pointerEvents: showTicketTooltip ? 'auto' : 'none', position: 'absolute', top: 35, left: 0, width: 220, zIndex: 100, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 6 }}>
+                        <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e0' }}>
+                          <Text style={{ color: '#2d3748', fontSize: 12, lineHeight: 18 }}>
+                            <Text style={{ fontWeight: 'bold', color: '#007AFF' }}>Ticket Médio</Text> é o valor financeiro médio gasto em cada venda. Indica quanto, em média, a sua loja lucrou por transação neste período.
+                          </Text>
+                        </View>
+                        <View style={{ position: 'absolute', top: -6, left: 24, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }], borderTopWidth: 1, borderLeftWidth: 1, borderColor: '#cbd5e0' }} />
+                      </Animated.View>
                     </View>
                     
                     {filter !== 'Tudo' && salesTotalPrev > 0 && (
                       <View style={{ position: 'relative', zIndex: 20 }}>
-                        <TouchableOpacity onPress={() => setShowGrowthTooltip(!showGrowthTooltip)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: crescimento >= 0 ? 'rgba(76, 175, 80, 0.8)' : 'rgba(244, 67, 54, 0.8)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                        <TouchableOpacity onPress={() => { setShowGrowthTooltip(!showGrowthTooltip); setShowTicketTooltip(false); }} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: crescimento >= 0 ? 'rgba(76, 175, 80, 0.8)' : 'rgba(244, 67, 54, 0.8)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
                           <Ionicons name={crescimento >= 0 ? "trending-up" : "trending-down"} size={14} color="#fff" style={{ marginRight: 4 }} />
                           <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
                             {crescimento >= 0 ? '+' : ''}{crescimento}%
@@ -5197,21 +5360,50 @@ const DashboardScreen = ({ navigation }) => {
           </View>
         </LinearGradient>
 
-        
-
-        {/* O carrossel de insights foi movido para a aba de Inteligência & Desempenho */}
-
-        {/* ========================================================
-            2. GRÁFICO HISTÓRICO E RANKING
-            ======================================================== */}
         <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-            <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1a202c' }}>
-              Evolução {timeSpan === 'Mês' ? 'Mensal' : timeSpan === 'Trimestre' ? 'Trimestral' : timeSpan === 'Semestre' ? 'Semestral' : 'Anual'}
-            </Text>
-            
-            {/* Seletor de Mês/Ano */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f4f8', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
+            <Ionicons name="stats-chart" size={24} color={metricColor} style={{ marginRight: 8 }} />
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Evolução do Negócio</Text>
+          </View>
+          
+          <View style={{ flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 20, padding: 3, marginBottom: 15 }}>
+            <TouchableOpacity onPress={() => { setChartTimeMode('corridos'); setTimeSpan('30 Dias'); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 18, backgroundColor: chartTimeMode === 'corridos' ? '#fff' : 'transparent', shadowColor: chartTimeMode === 'corridos' ? '#000' : 'transparent', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 1, elevation: chartTimeMode === 'corridos' ? 1 : 0 }}>
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: chartTimeMode === 'corridos' ? '#2d3748' : '#718096' }}>Corridos</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { setChartTimeMode('calendario'); setTimeSpan('Mês'); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 18, backgroundColor: chartTimeMode === 'calendario' ? '#fff' : 'transparent', shadowColor: chartTimeMode === 'calendario' ? '#000' : 'transparent', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 1, elevation: chartTimeMode === 'calendario' ? 1 : 0 }}>
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: chartTimeMode === 'calendario' ? '#2d3748' : '#718096' }}>Calendário</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15, gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <TimeSpanDropdown 
+                fullWidth={true}
+                color={metricColor}
+                options={chartTimeMode === 'calendario' ? ['Mês', 'Trimestre', 'Semestre', 'Ano'] : ['7 Dias', '30 Dias', 'Ano (365)']}
+                value={timeSpan}
+                onSelect={(ts) => {
+                  setTimeSpan(ts);
+                  if (chartTimeMode === 'calendario') {
+                    setSelectedMonth(new Date().getMonth());
+                    setSelectedYear(new Date().getFullYear());
+                  }
+                }}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <TimeSpanDropdown 
+                fullWidth={true}
+                color={metricColor}
+                options={['Receita', 'Lucro', 'Rentabilidade', 'Itens']}
+                value={chartMetric}
+                onSelect={(metric) => setChartMetric(metric)}
+              />
+            </View>
+          </View>
+
+          {chartTimeMode === 'calendario' && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f4f8', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 15, justifyContent: 'space-between' }}>
               <TouchableOpacity onPress={() => {
                 const step = timeSpan === 'Trimestre' ? 3 : timeSpan === 'Semestre' ? 6 : timeSpan === 'Ano' ? 12 : 1;
                 let newMonth = selectedMonth - step;
@@ -5223,15 +5415,17 @@ const DashboardScreen = ({ navigation }) => {
                 }
                 setSelectedMonth(newMonth);
                 setSelectedYear(newYear);
-              }}>
-                <Ionicons name="chevron-back" size={20} color="#007AFF" />
+              }} style={{ padding: 5 }}>
+                <Ionicons name="chevron-back" size={20} color={metricColor} />
               </TouchableOpacity>
-              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#007AFF', marginHorizontal: 8, minWidth: 65, textAlign: 'center' }}>
+              
+              <Text style={{ fontSize: 15, fontWeight: 'bold', color: metricColor, textAlign: 'center', flex: 1 }}>
                 {timeSpan === 'Mês' ? `${months[selectedMonth]} ${selectedYear}` :
                  timeSpan === 'Trimestre' ? `${Math.floor(selectedMonth/3)+1}º Tri de ${selectedYear}` :
                  timeSpan === 'Semestre' ? `${Math.floor(selectedMonth/6)+1}º Sem de ${selectedYear}` :
                  `Ano de ${selectedYear}`}
               </Text>
+              
               <TouchableOpacity onPress={() => {
                 const step = timeSpan === 'Trimestre' ? 3 : timeSpan === 'Semestre' ? 6 : timeSpan === 'Ano' ? 12 : 1;
                 let newMonth = selectedMonth + step;
@@ -5242,55 +5436,12 @@ const DashboardScreen = ({ navigation }) => {
                 }
                 setSelectedMonth(newMonth);
                 setSelectedYear(newYear);
-              }}>
-                <Ionicons name="chevron-forward" size={20} color="#007AFF" />
+              }} style={{ padding: 5 }}>
+                <Ionicons name="chevron-forward" size={20} color={metricColor} />
               </TouchableOpacity>
             </View>
-          </View>
+          )}
 
-          {/* Seletor de Período (timeSpan) */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15, marginHorizontal: -5 }}>
-            {['Mês', 'Trimestre', 'Semestre', 'Ano'].map(ts => (
-              <TouchableOpacity
-                key={ts}
-                onPress={() => {
-                  setTimeSpan(ts);
-                  setSelectedMonth(new Date().getMonth());
-                  setSelectedYear(new Date().getFullYear());
-                }}
-                style={{
-                  backgroundColor: timeSpan === ts ? '#333' : '#f0f4f8',
-                  paddingHorizontal: 15,
-                  paddingVertical: 6,
-                  borderRadius: 20,
-                  marginHorizontal: 5
-                }}
-              >
-                <Text style={{ color: timeSpan === ts ? '#fff' : '#666', fontWeight: 'bold', fontSize: 12 }}>{ts}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {/* Filtros de Métrica */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
-            {['Receita', 'Lucro', 'Margem', 'Itens'].map(metric => (
-              <TouchableOpacity
-                key={metric}
-                onPress={() => setChartMetric(metric)}
-                style={{
-                  backgroundColor: chartMetric === metric ? (metric === 'Lucro' ? '#28a745' : metric === 'Itens' ? '#ff9800' : metric === 'Margem' ? '#8e44ad' : '#007AFF') : '#f0f4f8',
-                  paddingHorizontal: 15,
-                  paddingVertical: 6,
-                  borderRadius: 20,
-                  marginRight: 10
-                }}
-              >
-                <Text style={{ color: chartMetric === metric ? '#fff' : '#666', fontWeight: 'bold', fontSize: 12 }}>{metric}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {/* Área do Gráfico */}
           <View style={{ alignItems: 'center', minHeight: 236, justifyContent: 'center' }}>
             {chartLoading ? (
               <ActivityIndicator size="large" color="#007AFF" />
@@ -5302,8 +5453,8 @@ const DashboardScreen = ({ navigation }) => {
                 withDots={false}
                 withInnerLines={false}
                 withOuterLines={false}
-                yAxisLabel={chartMetric === 'Itens' || chartMetric === 'Margem' ? '' : 'R$ '}
-                yAxisSuffix={chartMetric === 'Itens' ? ' un' : chartMetric === 'Margem' ? '%' : ''}
+                yAxisLabel={chartMetric === 'Itens' || chartMetric === 'Rentabilidade' ? '' : 'R$ '}
+                yAxisSuffix={chartMetric === 'Itens' ? ' un' : chartMetric === 'Rentabilidade' ? '%' : ''}
                 chartConfig={{
                   backgroundColor: "#fff",
                   backgroundGradientFrom: "#fff",
@@ -5325,32 +5476,32 @@ const DashboardScreen = ({ navigation }) => {
             )}
           </View>
 
-          {/* Ranking Top 5 */}
           {topProducts.length > 0 && (
             <View style={{ marginTop: 20, borderTopWidth: 1, borderColor: '#eee', paddingTop: 15, opacity: chartLoading ? 0.5 : 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
                 <Ionicons name="trophy-outline" size={16} color="#4a5568" style={{ marginRight: 5 }} />
-                <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#4a5568' }}>
-                  {chartMetric === 'Lucro' ? `Maiores Lucros do ${timeSpan}` : chartMetric === 'Itens' ? `Maiores Saídas do ${timeSpan}` : chartMetric === 'Margem' ? `Maiores Margens do ${timeSpan}` : `Maiores Receitas do ${timeSpan}`}
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1a202c' }}>
+                  {chartMetric === 'Lucro' ? `Maiores Lucros` : chartMetric === 'Itens' ? `Maiores Saídas` : chartMetric === 'Rentabilidade' ? `Mais Rentáveis` : `Maiores Receitas`} {chartTimeMode === 'calendario' ? `do ${timeSpan}` : (timeSpan === 'Ano (365)' ? `do último Ano` : `dos últimos ${timeSpan}`)}
                 </Text>
               </View>
               {topProducts.map((p, index) => (
-                <View key={p.id} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <Text style={{ color: '#2d3748', fontSize: 14, flex: 1 }} numberOfLines={1}>
-                    <Text style={{ fontWeight: 'bold', color: chartMetric === 'Lucro' ? '#28a745' : chartMetric === 'Itens' ? '#ff9800' : chartMetric === 'Margem' ? '#8e44ad' : '#007AFF' }}>{index + 1}º</Text> {p.nome}
+                <View key={p.id} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <Text numberOfLines={1} style={{ flex: 1, color: '#2d3748', fontWeight: '600' }}>
+                    <Text style={{ fontWeight: 'bold', color: chartMetric === 'Lucro' ? '#28a745' : chartMetric === 'Itens' ? '#8e44ad' : chartMetric === 'Rentabilidade' ? '#d69e2e' : '#007AFF' }}>{index + 1}º</Text> {p.nome}
                   </Text>
-                  <Text style={{ color: '#718096', fontSize: 13, fontWeight: '600' }}>
+                  <View style={{ alignItems: 'flex-end' }}>
                     {chartMetric === 'Lucro' 
-                      ? `${formatCurrency(p.lucro)} (${p.margem}%) ` 
+                      ? <Text style={{ color: '#28a745', fontWeight: 'bold' }}>{formatCurrency(p.lucro)}</Text>
                       : chartMetric === 'Receita' 
-                        ? formatCurrency(p.receita) 
-                        : chartMetric === 'Margem'
-                          ? `${p.margem}% `
-                          : null}
+                        ? <Text style={{ color: '#007AFF', fontWeight: 'bold' }}>{formatCurrency(p.receita)}</Text>
+                        : chartMetric === 'Rentabilidade'
+                          ? <Text style={{ color: '#d69e2e', fontWeight: 'bold' }}>{(p.rentabilidade || 0).toFixed(1)}%</Text>
+                          : <Text style={{ color: '#8e44ad', fontWeight: 'bold' }}>{p.qtd} un</Text>
+                    }
                     <Text style={{ color: '#a0aec0', fontSize: 11 }}>
-                      {chartMetric === 'Itens' ? `${p.qtd} un` : chartMetric === 'Margem' ? `(${formatCurrency(p.lucro)} lucro)` : `(${p.qtd} un)`}
+                      {chartMetric === 'Itens' ? `${p.qtd} un` : chartMetric === 'Rentabilidade' ? `(${formatCurrency(p.lucro)} lucro)` : `(${p.qtd} un)`}
                     </Text>
-                  </Text>
+                  </View>
                 </View>
               ))}
             </View>
@@ -5367,25 +5518,75 @@ const DashboardScreen = ({ navigation }) => {
           <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 14 }}>🪄 Gerar Histórico Falso (Apaga o Atual)</Text>
         </TouchableOpacity>
         <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="bulb" size={24} color="#3182ce" style={{ marginRight: 8 }} />
-              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Inteligência & Desempenho</Text>
-            </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
+            <Ionicons name="bulb" size={24} color="#007AFF" style={{ marginRight: 8 }} />
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Inteligência & Desempenho</Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 20, padding: 3, marginBottom: 15 }}>
+            <TouchableOpacity onPress={() => { setIntelTimeMode('corridos'); setIntelFilter('30 Dias'); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 18, backgroundColor: intelTimeMode === 'corridos' ? '#fff' : 'transparent', shadowColor: intelTimeMode === 'corridos' ? '#000' : 'transparent', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 1, elevation: intelTimeMode === 'corridos' ? 1 : 0 }}>
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: intelTimeMode === 'corridos' ? '#2d3748' : '#718096' }}>Corridos</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { setIntelTimeMode('calendario'); setIntelFilter('Mês'); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 18, backgroundColor: intelTimeMode === 'calendario' ? '#fff' : 'transparent', shadowColor: intelTimeMode === 'calendario' ? '#000' : 'transparent', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 1, elevation: intelTimeMode === 'calendario' ? 1 : 0 }}>
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: intelTimeMode === 'calendario' ? '#2d3748' : '#718096' }}>Calendário</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Filtros da Seção */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15, marginHorizontal: -20, paddingHorizontal: 20 }}>
-            {['7 Dias', '30 Dias', 'Ano', 'Tudo'].map((f) => (
-              <TouchableOpacity key={f} onPress={() => setIntelFilter(f)} style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, backgroundColor: intelFilter === f ? '#3182ce' : '#f0f4f8', marginRight: 10 }}>
-                <Text style={{ color: intelFilter === f ? '#fff' : '#4a5568', fontWeight: 'bold', fontSize: 13 }}>{f}</Text>
+          <View style={{ marginBottom: 15 }}>
+            <TimeSpanDropdown 
+              fullWidth={true}
+              options={intelTimeMode === 'corridos' ? ['7 Dias', '30 Dias', 'Ano', 'Tudo'] : ['Mês', 'Trimestre', 'Semestre', 'Ano']}
+              value={intelFilter}
+              onSelect={(f) => {
+                setIntelFilter(f);
+                if (intelTimeMode === 'calendario') {
+                  setIntelSelectedMonth(new Date().getMonth());
+                  setIntelSelectedYear(new Date().getFullYear());
+                }
+              }}
+            />
+          </View>
+
+          {intelTimeMode === 'calendario' && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f4f8', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 15, justifyContent: 'space-between' }}>
+              <TouchableOpacity onPress={() => {
+                const step = intelFilter === 'Trimestre' ? 3 : intelFilter === 'Semestre' ? 6 : intelFilter === 'Ano' ? 12 : 1;
+                let newMonth = intelSelectedMonth - step;
+                let newYear = intelSelectedYear;
+                if (newMonth < 0) {
+                  newYear -= Math.ceil(Math.abs(newMonth) / 12) || 1;
+                  newMonth = 12 + (newMonth % 12);
+                  if (newMonth === 12) newMonth = 0;
+                }
+                setIntelSelectedMonth(newMonth);
+                setIntelSelectedYear(newYear);
+              }} style={{ padding: 5 }}>
+                <Ionicons name="chevron-back" size={20} color="#007AFF" />
               </TouchableOpacity>
-            ))}
-            <View style={{ width: 40 }} />
-          </ScrollView>
+              
+              <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#007AFF', textAlign: 'center', flex: 1 }}>
+                {intelPeriodLabel}
+              </Text>
+              
+              <TouchableOpacity onPress={() => {
+                const step = intelFilter === 'Trimestre' ? 3 : intelFilter === 'Semestre' ? 6 : intelFilter === 'Ano' ? 12 : 1;
+                let newMonth = intelSelectedMonth + step;
+                let newYear = intelSelectedYear;
+                if (newMonth > 11) {
+                  newYear += Math.floor(newMonth / 12);
+                  newMonth = newMonth % 12;
+                }
+                setIntelSelectedMonth(newMonth);
+                setIntelSelectedYear(newYear);
+              }} style={{ padding: 5 }}>
+                <Ionicons name="chevron-forward" size={20} color="#007AFF" />
+              </TouchableOpacity>
+            </View>
+          )}
 
           {intelLoading ? (
-            <ActivityIndicator color="#3182ce" style={{ marginVertical: 30 }} />
+            <ActivityIndicator color="#007AFF" style={{ marginVertical: 30 }} />
           ) : (
             <>
               {/* Insights */}
@@ -5405,7 +5606,7 @@ const DashboardScreen = ({ navigation }) => {
               )}
 
               {/* Estatísticas Gerais */}
-              <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Visão Geral da Loja ({intelFilter})</Text>
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Visão Geral da Loja ({intelPeriodLabel})</Text>
               <View style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', padding: 15, marginBottom: 20 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, zIndex: 30 }}>
                   <View style={{ position: 'relative', zIndex: 30 }}>
@@ -5503,7 +5704,7 @@ const DashboardScreen = ({ navigation }) => {
                       <TouchableOpacity 
                         key={m} 
                         onPress={() => setBestDayMetric(m)}
-                        style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: bestDayMetric === m ? '#3182ce' : '#edf2f7', borderRadius: 16, marginHorizontal: 4 }}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: bestDayMetric === m ? '#007AFF' : '#edf2f7', borderRadius: 16, marginHorizontal: 4 }}
                       >
                         <Text style={{ fontSize: 11, fontWeight: 'bold', color: bestDayMetric === m ? '#fff' : '#718096' }}>{m}</Text>
                       </TouchableOpacity>
@@ -5525,11 +5726,11 @@ const DashboardScreen = ({ navigation }) => {
 
                       if (!isPlural) {
                         const article = isMasc ? 'o' : 'a';
-                        return <>{prefix} <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{bestDayMetric.toLowerCase()}</Text> foi {article} <Text style={{ fontWeight: 'bold', color: '#3182ce' }}>{rawDay}</Text>.</>;
+                        return <>{prefix} <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{bestDayMetric.toLowerCase()}</Text> foi {article} <Text style={{ fontWeight: 'bold', color: '#007AFF' }}>{rawDay}</Text>.</>;
                       } else {
                         const article = isMasc ? 'os' : 'as';
                         const pluralDay = rawDay + 's';
-                        return <>{prefix} <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{bestDayMetric.toLowerCase()}</Text> foram {article} <Text style={{ fontWeight: 'bold', color: '#3182ce' }}>{pluralDay}</Text>.</>;
+                        return <>{prefix} <Text style={{ fontWeight: 'bold', color: '#2d3748' }}>{bestDayMetric.toLowerCase()}</Text> foram {article} <Text style={{ fontWeight: 'bold', color: '#007AFF' }}>{pluralDay}</Text>.</>;
                       }
                     })()}
                   </Text>
@@ -5537,7 +5738,7 @@ const DashboardScreen = ({ navigation }) => {
               </View>
 
               {/* Lupa do Produto */}
-              <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Análise por Produto ({intelFilter})</Text>
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Análise por Produto ({intelPeriodLabel})</Text>
               <TouchableOpacity onPress={openIntelModal} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f0f4f8', padding: 15, borderRadius: 12, marginBottom: 15 }}>
                 <Text numberOfLines={1} style={{ flex: 1, marginRight: 10, color: intelSelectedProduct ? '#1a202c' : '#718096', fontWeight: 'bold', fontSize: 14 }}>
                   {intelSelectedProduct && products.find(p => p.id === intelSelectedProduct) ? products.find(p => p.id === intelSelectedProduct).nome : 'Selecione um produto para investigar'}
