@@ -57,6 +57,9 @@ const useStore = create((set) => ({
   produtoParaEditarId: null,
   setProdutoParaEditarId: (id) => set({ produtoParaEditarId: id }),
 
+  globalAutoFilter: null,
+  setGlobalAutoFilter: (filter) => set({ globalAutoFilter: filter }),
+
   products: [],
   setProducts: (products) => set({ products }),
   addProduct: (product) => set((state) => ({ products: [...state.products, product] })),
@@ -334,6 +337,9 @@ const EmptyScreen = ({ navigation }) => {
   const carrinhoGlobal = useStore(state => state.carrinhoGlobal);
   const [loadingProducts, setLoadingProducts] = useState(false);
 
+  const globalAutoFilter = useStore(state => state.globalAutoFilter);
+  const setGlobalAutoFilter = useStore(state => state.setGlobalAutoFilter);
+
   // --- NOVOS ESTADOS PARA PESQUISA E FILTRO ---
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOption, setSortOption] = useState('alpha-asc'); // Ordenação padrão: A-Z
@@ -370,7 +376,11 @@ const EmptyScreen = ({ navigation }) => {
         scrollY.setValue(0);
         setSearchQuery('');
         
-        setLoadingProducts(true);
+        const needsFullScreenLoad = products.length === 0 || (products[0] && products[0].loja_id !== lojaAtiva.id);
+        
+        if (needsFullScreenLoad) {
+          setLoadingProducts(true);
+        }
 
         const { data: { user } } = await supabase.auth.getUser();
         if (user) setMeuId(user.id);
@@ -393,7 +403,9 @@ const EmptyScreen = ({ navigation }) => {
         if (resNotificacoes.count !== null) setUnreadNotifCount(resNotificacoes.count);
         if (resProdutos.data) setProducts(resProdutos.data);
 
-        setLoadingProducts(false);
+        if (needsFullScreenLoad) {
+          setLoadingProducts(false);
+        }
       };
 
       inicializarLoja();
@@ -489,6 +501,10 @@ const EmptyScreen = ({ navigation }) => {
       const skuMatch = p.sku_barcode && p.sku_barcode.toLowerCase().includes(term);
       return nomeMatch || skuMatch;
     });
+
+    if (globalAutoFilter === 'critico') {
+      filtered = filtered.filter(p => p.estoque_atual <= p.estoque_minimo && p.estoque_minimo > 0);
+    }
 
     // 2. Depois ordenamos a lista filtrada com base na opção selecionada
     return filtered.sort((a, b) => {
@@ -939,6 +955,19 @@ const EmptyScreen = ({ navigation }) => {
               data={processedProducts}
               keyExtractor={(item) => item.id.toString()}
               contentContainerStyle={{ paddingHorizontal: 15, paddingBottom: 15, paddingTop: 75 }}
+              ListHeaderComponent={
+                globalAutoFilter === 'critico' ? (
+                  <View style={{ backgroundColor: '#fff5f5', padding: 15, marginBottom: 15, borderRadius: 8, borderWidth: 1, borderColor: '#feb2b2', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      <Ionicons name="warning" size={20} color="#e53e3e" style={{ marginRight: 8 }} />
+                      <Text style={{ color: '#c53030', fontWeight: 'bold', fontSize: 13, flex: 1 }}>Filtrando estoque crítico</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => setGlobalAutoFilter(null)} style={{ backgroundColor: '#e53e3e', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }}>
+                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>Limpar</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null
+              }
               
               renderItem={({ item }) => (
                 <TouchableOpacity 
@@ -4550,6 +4579,7 @@ const DashboardScreen = ({ navigation }) => {
   const lojaAtiva = useStore(state => state.lojaAtiva);
   const products = useStore(state => state.products);
   const meuId = useStore(state => state.session?.user?.id);
+  const setGlobalAutoFilter = useStore(state => state.setGlobalAutoFilter);
   
   // =================== STATES DA TELA ===================
   // 1. Resumo Principal
@@ -5362,7 +5392,7 @@ const DashboardScreen = ({ navigation }) => {
 
         <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
-            <Ionicons name="stats-chart" size={24} color={metricColor} style={{ marginRight: 8 }} />
+            <Ionicons name="bar-chart" size={24} color={metricColor} style={{ marginRight: 8 }} />
             <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Evolução do Negócio</Text>
           </View>
           
@@ -5519,8 +5549,8 @@ const DashboardScreen = ({ navigation }) => {
         </TouchableOpacity>
         <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
-            <Ionicons name="bulb" size={24} color="#007AFF" style={{ marginRight: 8 }} />
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Inteligência & Desempenho</Text>
+            <Ionicons name="stats-chart" size={24} color="#007AFF" style={{ marginRight: 8 }} />
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Análise de Desempenho</Text>
           </View>
 
           <View style={{ flexDirection: 'row', backgroundColor: '#e2e8f0', borderRadius: 20, padding: 3, marginBottom: 15 }}>
@@ -5589,21 +5619,7 @@ const DashboardScreen = ({ navigation }) => {
             <ActivityIndicator color="#007AFF" style={{ marginVertical: 30 }} />
           ) : (
             <>
-              {/* Insights */}
-              {intelInsights.length > 0 && (
-                <View style={{ marginBottom: 20 }}>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20, paddingHorizontal: 20 }}>
-                    {intelInsights.map(ins => (
-                      <View key={ins.id} style={{ backgroundColor: ins.bg, borderRadius: 12, padding: 15, width: 260, marginRight: 15, borderWidth: 1, borderColor: ins.cor + '40' }}>
-                        <Text style={{ fontSize: 14, fontWeight: 'bold', color: ins.cor, marginBottom: 5 }}>{ins.titulo}</Text>
-                        <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#2d3748', marginBottom: 5 }} numberOfLines={1}>{ins.produto}</Text>
-                        <Text style={{ fontSize: 12, color: '#4a5568' }}>{ins.descricao}</Text>
-                      </View>
-                    ))}
-                    <View style={{ width: 40 }} />
-                  </ScrollView>
-                </View>
-              )}
+              {/* Insights Removidos */}
 
               {/* Estatísticas Gerais */}
               <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#a0aec0', marginBottom: 10, textTransform: 'uppercase' }}>Visão Geral da Loja ({intelPeriodLabel})</Text>
@@ -5929,53 +5945,69 @@ const DashboardScreen = ({ navigation }) => {
         {/* ========================================================
             4. RETRATO DO ESTOQUE ATUAL & ALERTAS
             ======================================================== */}
-        <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#2d3748', marginBottom: 15, marginTop: 10 }}>Retrato do Estoque Atual</Text>
-
-        {estoqueCritico.length > 0 && (
-          <TouchableOpacity 
-            onPress={() => navigation.navigate('Estoque')}
-            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff5f5', borderColor: '#feb2b2', borderWidth: 1, borderRadius: 12, padding: 15, marginBottom: 15 }}
-          >
-            <Ionicons name="warning" size={24} color="#e53e3e" style={{ marginRight: 10 }} />
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: '#c53030', fontWeight: 'bold', fontSize: 14 }}>Atenção Necessária</Text>
-              <Text style={{ color: '#e53e3e', fontSize: 13 }}>Você tem {estoqueCritico.length} produto(s) no estoque crítico.</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#e53e3e" />
-          </TouchableOpacity>
-        )}
-
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 }}>
-          <View style={{ flex: 1, backgroundColor: '#fff', padding: 15, borderRadius: 16, marginRight: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
-            <Ionicons name="cube-outline" size={24} color="#4a5568" marginBottom={10} />
-            <Text style={{ color: '#718096', fontSize: 12, fontWeight: '600' }}>Custo Investido</Text>
-            <Text style={{ color: '#2d3748', fontSize: 18, fontWeight: 'bold', marginTop: 5 }}>{formatCurrency(totalInvestido)}</Text>
+        <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
+            <Ionicons name="cube" size={24} color="#007AFF" style={{ marginRight: 8 }} />
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1a202c' }}>Retrato do Estoque Atual</Text>
           </View>
-          
-          <View style={{ flex: 1, backgroundColor: '#fff', padding: 15, borderRadius: 16, marginLeft: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 3 }}>
-            <Ionicons name="pricetag-outline" size={24} color="#4a5568" marginBottom={10} />
-            <Text style={{ color: '#718096', fontSize: 12, fontWeight: '600' }}>Receita Bruta</Text>
-            <Text style={{ color: '#2d3748', fontSize: 18, fontWeight: 'bold', marginTop: 5 }}>{formatCurrency(valorBruto)}</Text>
-          </View>
-        </View>
 
-        <LinearGradient
-          colors={['#4CAF50', '#2E7D32']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{ borderRadius: 16, padding: 20, shadowColor: '#4CAF50', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 8 }}
-        >
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <View>
-              <Text style={{ color: '#e8f5e9', fontSize: 14, fontWeight: '600' }}>Lucro Projetado (Físico)</Text>
-              <Text style={{ color: '#fff', fontSize: 28, fontWeight: 'bold', marginTop: 5 }}>{formatCurrency(lucroProjetado)}</Text>
-              <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginTop: 8 }}>
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>Margem Geral: {margemGeral}%</Text>
+          {estoqueCritico.length > 0 && (
+            <TouchableOpacity 
+              onPress={() => {
+                setGlobalAutoFilter('critico');
+                navigation.goBack();
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff5f5', borderColor: '#feb2b2', borderWidth: 1, borderRadius: 12, padding: 15, marginBottom: 15 }}
+            >
+              <Ionicons name="warning" size={24} color="#e53e3e" style={{ marginRight: 10 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#c53030', fontWeight: 'bold', fontSize: 14 }}>Atenção Necessária</Text>
+                <Text style={{ color: '#e53e3e', fontSize: 13 }}>Você tem {estoqueCritico.length} produto(s) no estoque crítico.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#e53e3e" />
+            </TouchableOpacity>
+          )}
+
+          <View style={{ flexDirection: 'column', marginBottom: 15 }}>
+            <View style={{ backgroundColor: '#f0f4f8', padding: 15, borderRadius: 12, marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View>
+                <Text style={{ color: '#718096', fontSize: 12, fontWeight: 'bold', textTransform: 'uppercase' }}>Custo Investido</Text>
+                <Text style={{ color: '#1a202c', fontSize: 20, fontWeight: 'bold', marginTop: 4 }}>{formatCurrency(totalInvestido)}</Text>
+              </View>
+              <View style={{ backgroundColor: 'rgba(0, 122, 255, 0.1)', padding: 10, borderRadius: 12 }}>
+                <Ionicons name="cube-outline" size={24} color="#007AFF" />
               </View>
             </View>
-            <Ionicons name="trending-up" size={40} color="rgba(255,255,255,0.8)" />
+            
+            <View style={{ backgroundColor: '#f0f4f8', padding: 15, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View>
+                <Text style={{ color: '#718096', fontSize: 12, fontWeight: 'bold', textTransform: 'uppercase' }}>Receita Bruta</Text>
+                <Text style={{ color: '#1a202c', fontSize: 20, fontWeight: 'bold', marginTop: 4 }}>{formatCurrency(valorBruto)}</Text>
+              </View>
+              <View style={{ backgroundColor: 'rgba(0, 122, 255, 0.1)', padding: 10, borderRadius: 12 }}>
+                <Ionicons name="pricetag-outline" size={24} color="#007AFF" />
+              </View>
+            </View>
           </View>
-        </LinearGradient>
+
+          <LinearGradient
+            colors={['#10b981', '#047857']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{ borderRadius: 12, padding: 20 }}
+          >
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View>
+                <Text style={{ color: '#d1fae5', fontSize: 13, fontWeight: 'bold', textTransform: 'uppercase' }}>Lucro Projetado (Físico)</Text>
+                <Text style={{ color: '#fff', fontSize: 26, fontWeight: 'bold', marginTop: 4 }}>{formatCurrency(lucroProjetado)}</Text>
+                <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginTop: 8 }}>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>Margem Geral: {margemGeral}%</Text>
+                </View>
+              </View>
+              <Ionicons name="trending-up" size={40} color="rgba(255,255,255,0.3)" />
+            </View>
+          </LinearGradient>
+        </View>
 
       </ScrollView>
 
